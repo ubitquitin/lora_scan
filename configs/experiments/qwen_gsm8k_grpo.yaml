@@ -1,0 +1,14 @@
+name: qwen15_gsm8k_grpo
+method: grpo
+model: qwen25-1.5b
+dataset: gsm8k
+prompt: cot
+lora: {rank: 1, alpha: 32, dropout: 0.0}
+training:
+  learning_rate: 1.0e-5
+  max_steps: 500
+  num_generations: 4
+  max_completion_length: 256
+seeds: [42, 123, 456]
+sweep:
+  lora.location: [early, middle, late, random, all]

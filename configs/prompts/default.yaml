@@ -1,0 +1,4 @@
+name: default
+template: |
+  {question}
+target: full      # SFT target: full (reasoning + answer) | short (answer only)

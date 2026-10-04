@@ -1,0 +1,3 @@
+# experiment_id -> seed -> run_id. Auto-updated by scripts/run.py.
+# Lets analysis find per-item predictions (runs/<run_id>/predictions.jsonl) to pair across experiments.
+{}

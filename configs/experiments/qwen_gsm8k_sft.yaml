@@ -1,0 +1,9 @@
+name: qwen15_gsm8k_sft
+method: sft
+model: qwen25-1.5b
+dataset: gsm8k
+prompt: cot
+lora: {rank: 1, alpha: 1, dropout: 0.0}
+seeds: [42, 123, 456]
+sweep:                       # one experiment per value -> qwen15_gsm8k_sft_<location>
+  lora.location: [early, middle, late, random, all]

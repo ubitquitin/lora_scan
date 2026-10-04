@@ -1,0 +1,42 @@
+# Merged underneath every experiment. Experiments only state what differs.
+lora:
+  rank: 1
+  alpha: 32
+  dropout: 0.0
+  location: late
+  # target_modules: [q_proj, v_proj]   # optional override of the model default
+
+data:
+  max_train_samples: null   # null = full split
+  max_eval_samples: null
+  subsample_seed: 0         # FIXED so every run sees the same items (needed for paired tests)
+
+evaluation:
+  max_new_tokens: 512
+  batch_size: 32
+  temperature: 0.0
+
+reproducibility:
+  include_git_commit: true  # git commit becomes part of the run hash
+
+# Per-method defaults. Every key under `training` is passed straight through
+# to trl's SFTConfig / GRPOConfig, so any TrainingArguments option works.
+training:
+  none: {}
+  sft:
+    learning_rate: 1.0e-4
+    max_steps: 500
+    per_device_train_batch_size: 8
+    gradient_accumulation_steps: 2
+    max_length: 1024
+    logging_steps: 10
+    lr_scheduler_type: cosine
+    warmup_ratio: 0.03
+  grpo:
+    learning_rate: 1.0e-5
+    max_steps: 500
+    per_device_train_batch_size: 8   # must be divisible by num_generations
+    gradient_accumulation_steps: 1
+    num_generations: 4
+    max_completion_length: 256
+    logging_steps: 10

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lorascan"
+version = "0.1.0"
+description = "Config-driven SFT / GRPO LoRA experiments across models, datasets and layer locations"
+requires-python = ">=3.10"
+dependencies = [
+  "pyyaml>=6",
+  "torch>=2.2",
+  "transformers>=4.46",
+  "peft>=0.13",
+  "trl>=0.19",
+  "datasets>=2.20",
+  "accelerate>=0.34",
+]
+
+[project.optional-dependencies]
+analysis = ["pandas", "pyarrow", "scipy", "statsmodels", "jupyter"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

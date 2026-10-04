@@ -1,0 +1,6 @@
+name: answer_only
+template: |
+  Answer the following question. Respond with only the final answer.
+
+  {question}
+target: short

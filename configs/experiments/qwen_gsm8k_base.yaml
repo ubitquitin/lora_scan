@@ -1,0 +1,7 @@
+# Untrained baseline (no LoRA, no training): the reference point for every scan.
+name: qwen15_gsm8k_base
+method: none
+model: qwen25-1.5b
+dataset: gsm8k
+prompt: cot
+seeds: [42]

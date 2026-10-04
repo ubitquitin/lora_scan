@@ -1,0 +1,7 @@
+name: gemma2-2b
+hf_id: google/gemma-2-2b-it
+revision: null            # pin a commit sha for strict reproducibility
+architecture: gemma2
+num_layers: 26
+target_modules: [q_proj, k_proj, v_proj, o_proj]
+attn_implementation: eager

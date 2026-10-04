@@ -1,0 +1,7 @@
+name: gsm8k
+hf_id: openai/gsm8k
+subset: main
+revision: null
+train_split: train
+eval_split: test
+evaluator: gsm8k

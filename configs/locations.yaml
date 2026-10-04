@@ -1,0 +1,28 @@
+# Location registry. A name is an abstraction, not necessarily a proportion.
+# Models can add/override entries via a `locations:` block in their model config.
+locations:
+  all:
+    type: proportion
+    start: 0.0
+    end: 1.0
+  early:
+    type: proportion
+    start: 0.0
+    end: 0.33
+  middle:
+    type: proportion
+    start: 0.33
+    end: 0.67
+  late:
+    type: proportion
+    start: 0.67
+    end: 1.0
+  every_other:
+    type: stride
+    start: 0.0
+    end: 1.0
+    step: 2
+  random:
+    type: random
+    fraction: 0.33
+    # no `seed` -> draw is seeded by the run seed. Set `seed: 1234` to share one fixed draw.

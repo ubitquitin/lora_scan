@@ -1,0 +1,9 @@
+name: cot
+template: |
+  Solve the following problem step by step.
+
+  Problem:
+  {question}
+
+  Give your final answer clearly.
+target: full

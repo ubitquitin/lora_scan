@@ -1,0 +1,10 @@
+# Same intervention across model sizes / families.
+name: scale_gsm8k_grpo
+method: grpo
+model: qwen25-1.5b
+dataset: gsm8k
+prompt: cot
+lora: {location: late}
+seeds: [42]
+sweep:
+  model: [qwen25-0.5b, qwen25-1.5b, qwen25-3b, gemma2-2b]

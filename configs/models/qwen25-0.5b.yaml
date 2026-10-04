@@ -1,0 +1,7 @@
+name: qwen25-0.5b
+hf_id: Qwen/Qwen2.5-0.5B-Instruct
+revision: null            # pin a commit sha for strict reproducibility
+architecture: qwen2
+num_layers: 24
+target_modules: [q_proj, k_proj, v_proj, o_proj]
+

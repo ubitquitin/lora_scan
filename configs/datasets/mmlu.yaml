@@ -1,0 +1,7 @@
+name: mmlu
+hf_id: cais/mmlu
+subset: all
+revision: null
+train_split: auxiliary_train
+eval_split: test
+evaluator: multiple_choice
