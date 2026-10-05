@@ -1,0 +1,5 @@
+name: chat
+# Direct chat format matching notebook: user provides question, assistant provides full answer
+template: |
+  {question}
+target: full

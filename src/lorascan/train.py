@@ -1,6 +1,7 @@
 """Model loading, LoRA construction, SFT and GRPO. Both trainers share one signature."""
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from .evaluate import render_prompt, render_target
@@ -11,26 +12,44 @@ def seed_everything(seed: int) -> None:
     set_seed(seed)
 
 
+def verify_gpu() -> dict:
+    """Verify GPU availability and return device info. Raises RuntimeError if no GPU."""
+    import torch
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "No CUDA-capable GPU detected. This project requires GPU for training.\n"
+            "Please ensure:\n"
+            "  - CUDA is installed\n"
+            "  - PyTorch was installed with CUDA support\n"
+            "  - A compatible GPU is available"
+        )
+    device_id = torch.cuda.current_device()
+    device_name = torch.cuda.get_device_name(device_id)
+    memory_gb = torch.cuda.get_device_properties(device_id).total_memory / 1e9
+    return {
+        "device_id": device_id,
+        "device_name": device_name,
+        "memory_gb": round(memory_gb, 2),
+        "supports_bf16": torch.cuda.is_bf16_supported(),
+    }
+
+
 def _dtype():
     import torch
-    if torch.cuda.is_available():
-        return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-    return torch.float32
+    return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
 
 
 def load_model_and_tokenizer(model_cfg: dict):
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    kwargs = {"revision": model_cfg.get("revision"), "torch_dtype": _dtype()}
+    kwargs = {"revision": model_cfg.get("revision"), "torch_dtype": _dtype(), "device_map": "auto"}
     if model_cfg.get("attn_implementation"):
         kwargs["attn_implementation"] = model_cfg["attn_implementation"]
     tok = AutoTokenizer.from_pretrained(model_cfg["hf_id"], revision=model_cfg.get("revision"))
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     model = AutoModelForCausalLM.from_pretrained(model_cfg["hf_id"], **kwargs)
-    if torch.cuda.is_available():
-        model = model.to("cuda")
     return model, tok
 
 
@@ -46,9 +65,82 @@ def build_lora_config(lora_cfg: dict, model_cfg: dict, layers: list[int]):
 
 def _precision_flags() -> dict:
     import torch
-    if not torch.cuda.is_available():
-        return {}
     return {"bf16": True} if torch.cuda.is_bf16_supported() else {"fp16": True}
+
+
+class ProgressCallback:
+    """Custom callback for detailed progress reporting during training."""
+
+    def __init__(self, max_steps: int):
+        from transformers import TrainerCallback
+        self.max_steps = max_steps
+        self.start_time = None
+        self.last_log = None
+
+        class _Callback(TrainerCallback):
+            def __init__(self, progress_tracker):
+                self.tracker = progress_tracker
+
+            def on_train_begin(self, args, state, control, **kwargs):
+                self.tracker.start_time = time.time()
+                self.tracker.last_log = self.tracker.start_time
+                print(f"\n{'='*70}")
+                print(f"  Training started: {self.tracker.max_steps} steps")
+                print(f"{'='*70}")
+
+            def on_log(self, args, state, control, logs=None, **kwargs):
+                if logs and "loss" in logs:
+                    current_step = state.global_step
+                    elapsed = time.time() - self.tracker.start_time
+
+                    # Calculate progress
+                    progress_pct = (current_step / self.tracker.max_steps) * 100
+
+                    # Estimate time remaining
+                    if current_step > 0:
+                        avg_time_per_step = elapsed / current_step
+                        remaining_steps = self.tracker.max_steps - current_step
+                        eta_seconds = avg_time_per_step * remaining_steps
+
+                        # Format times
+                        elapsed_str = self._format_time(elapsed)
+                        eta_str = self._format_time(eta_seconds)
+                        throughput = current_step / elapsed if elapsed > 0 else 0
+
+                        # Progress bar
+                        bar_width = 40
+                        filled = int(bar_width * current_step / self.tracker.max_steps)
+                        bar = '█' * filled + '░' * (bar_width - filled)
+
+                        # Print progress update
+                        print(f"\r[{bar}] {progress_pct:5.1f}% | "
+                              f"Step {current_step}/{self.tracker.max_steps} | "
+                              f"Loss: {logs['loss']:.4f} | "
+                              f"Elapsed: {elapsed_str} | "
+                              f"ETA: {eta_str} | "
+                              f"{throughput:.2f} steps/s", end='', flush=True)
+
+            def on_train_end(self, args, state, control, **kwargs):
+                elapsed = time.time() - self.tracker.start_time
+                print(f"\n{'='*70}")
+                print(f"  Training completed in {self._format_time(elapsed)}")
+                print(f"{'='*70}\n")
+
+            @staticmethod
+            def _format_time(seconds):
+                """Format seconds into human-readable time."""
+                if seconds < 60:
+                    return f"{seconds:.0f}s"
+                elif seconds < 3600:
+                    mins = int(seconds // 60)
+                    secs = int(seconds % 60)
+                    return f"{mins}m {secs}s"
+                else:
+                    hours = int(seconds // 3600)
+                    mins = int((seconds % 3600) // 60)
+                    return f"{hours}h {mins}m"
+
+        self.callback = _Callback(self)
 
 
 def _info(trainer, output_dir: Path) -> tuple:
@@ -70,10 +162,16 @@ def train_sft(*, model, tokenizer, dataset, prompt, lora_config, training_config
     eos = tokenizer.eos_token or ""
     rows = [{"prompt": render_prompt(tokenizer, it, prompt),
              "completion": render_target(it, prompt) + eos} for it in dataset]
+
+    # Create progress callback
+    max_steps = training_config.get("max_steps", 500)
+    progress = ProgressCallback(max_steps)
+
     args = SFTConfig(output_dir=str(output_dir), seed=seed, report_to="none", save_strategy="none",
                      **_precision_flags(), **training_config)
     trainer = SFTTrainer(model=model, args=args, train_dataset=Dataset.from_list(rows),
-                         processing_class=tokenizer, peft_config=lora_config)
+                         processing_class=tokenizer, peft_config=lora_config,
+                         callbacks=[progress.callback])
     trainer.train()
     return _info(trainer, Path(output_dir))
 
@@ -88,11 +186,15 @@ def train_grpo(*, model, tokenizer, dataset, prompt, lora_config, training_confi
         texts = [c[-1]["content"] if isinstance(c, list) else c for c in completions]
         return [1.0 if evaluator.score(t, g) else 0.0 for t, g in zip(texts, gold)]
 
+    # Create progress callback
+    max_steps = training_config.get("max_steps", 500)
+    progress = ProgressCallback(max_steps)
+
     args = GRPOConfig(output_dir=str(output_dir), seed=seed, report_to="none", save_strategy="no",
                       **_precision_flags(), **training_config)
     trainer = GRPOTrainer(model=model, reward_funcs=[correctness_reward], args=args,
                           train_dataset=Dataset.from_list(rows), processing_class=tokenizer,
-                          peft_config=lora_config)
+                          peft_config=lora_config, callbacks=[progress.callback])
     trainer.train()
     return _info(trainer, Path(output_dir))
 

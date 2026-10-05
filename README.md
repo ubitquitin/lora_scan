@@ -5,15 +5,24 @@ Config-driven SFT / GRPO LoRA experiments across models, datasets and **layer lo
 > Configuration defines the experiment; a small set of reusable functions executes it;
 > raw per-item outputs are the scientific record; analysis happens afterward.
 
+## Requirements
+
+**GPU Required**: This project requires a CUDA-capable GPU for training. The code will verify GPU availability at startup and fail with a clear error if none is detected.
+
+- **Minimum**: 12GB VRAM (adjust batch sizes in `configs/defaults.yaml`)
+- **Recommended**: 16-24GB VRAM (RTX 3090, 4090, A10, A100, etc.)
+- PyTorch with CUDA support (verify with `python -c "import torch; print(torch.cuda.is_available())"`)
+
 ## Quick start
 
 ```bash
 pip install -e ".[analysis,dev]"
 pytest                                                                  # CPU-only, no downloads
 
+python scripts/check_gpu.py                                                # Verify GPU is available
 python scripts/run.py configs/experiments/qwen_gsm8k_grpo.yaml --dry-run   # run ids + resolved layers
-python scripts/run.py configs/experiments/qwen_gsm8k_base.yaml             # untrained baseline
-python scripts/run.py configs/experiments/qwen_gsm8k_grpo.yaml             # 5 locations x 3 seeds
+python scripts/run.py configs/experiments/qwen_gsm8k_base.yaml             # untrained baseline (GPU check)
+python scripts/run.py configs/experiments/qwen_gsm8k_grpo.yaml             # 5 locations x 3 seeds (requires GPU)
 python scripts/aggregate.py                                                # -> results/runs.parquet
 ```
 

@@ -1,4 +1,5 @@
 # Merged underneath every experiment. Experiments only state what differs.
+# NOTE: All training requires GPU. Batch sizes are optimized for ~12-24GB VRAM.
 lora:
   rank: 1
   alpha: 32
@@ -13,7 +14,7 @@ data:
 
 evaluation:
   max_new_tokens: 512
-  batch_size: 32
+  batch_size: 64            # Increased for GPU; reduce if OOM
   temperature: 0.0
 
 reproducibility:
@@ -21,13 +22,17 @@ reproducibility:
 
 # Per-method defaults. Every key under `training` is passed straight through
 # to trl's SFTConfig / GRPOConfig, so any TrainingArguments option works.
+# GPU-optimized batch sizes (adjust based on your VRAM):
+#   - 24GB: use defaults
+#   - 16GB: halve per_device_train_batch_size, double gradient_accumulation_steps
+#   - 12GB: quarter batch size, quadruple gradient_accumulation
 training:
   none: {}
   sft:
     learning_rate: 1.0e-4
     max_steps: 500
-    per_device_train_batch_size: 8
-    gradient_accumulation_steps: 2
+    per_device_train_batch_size: 16  # Increased for GPU (was 8)
+    gradient_accumulation_steps: 1   # Decreased (was 2); effective batch = 16
     max_length: 1024
     logging_steps: 10
     lr_scheduler_type: cosine
@@ -35,8 +40,8 @@ training:
   grpo:
     learning_rate: 1.0e-5
     max_steps: 500
-    per_device_train_batch_size: 8   # must be divisible by num_generations
+    per_device_train_batch_size: 16  # Increased for GPU; must be divisible by num_generations
     gradient_accumulation_steps: 1
-    num_generations: 4
+    num_generations: 4               # 16/4 = 4 prompts per batch
     max_completion_length: 256
     logging_steps: 10

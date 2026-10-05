@@ -1,0 +1,7 @@
+# Optional dependencies for analysis
+-r requirements.txt
+pandas
+pyarrow
+scipy
+statsmodels
+jupyter

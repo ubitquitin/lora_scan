@@ -41,13 +41,15 @@ def plan(path, seeds_override=None, only=None) -> list[Job]:
     return jobs
 
 
-def execute(job: Job, runs_dir: Path) -> None:
+def execute(job: Job, runs_dir: Path, gpu_info: dict) -> None:
     from lorascan import evaluate, train  # heavy imports only when actually running
 
     cfg, run = job.config, runs.Run(runs_dir, job.run_id)
     run.start(cfg, job.seed, job.location, job.version)
     try:
         train.seed_everything(job.seed)
+        print(f"  GPU: {gpu_info['device_name']} ({gpu_info['memory_gb']}GB) | "
+              f"Precision: {'bf16' if gpu_info['supports_bf16'] else 'fp16'}")
         model, tok = train.load_model_and_tokenizer(cfg["model"])
         evaluator = evaluate.get_evaluator(cfg["dataset"]["evaluator"])
         train_items = []
@@ -83,6 +85,19 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="print the plan (run ids, resolved layers) and exit")
     a = ap.parse_args()
 
+    # Verify GPU availability upfront (before loading models)
+    if not a.dry_run:
+        from lorascan import train
+        try:
+            gpu_info = train.verify_gpu()
+            print(f"GPU detected: {gpu_info['device_name']} ({gpu_info['memory_gb']}GB, "
+                  f"{'bf16' if gpu_info['supports_bf16'] else 'fp16'} precision)\n")
+        except RuntimeError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        gpu_info = None
+
     jobs = plan(a.experiment, a.seeds, a.only)
     runs_dir = Path(a.runs_dir)
     failed = 0
@@ -97,7 +112,7 @@ def main():
             continue
         # Failed runs are re-run into the same dir; a forced rerun overwrites it.
         try:
-            execute(job, runs_dir)
+            execute(job, runs_dir, gpu_info)
         except Exception:
             failed += 1
             traceback.print_exc()
