@@ -167,7 +167,7 @@ def train_sft(*, model, tokenizer, dataset, prompt, lora_config, training_config
     max_steps = training_config.get("max_steps", 500)
     progress = ProgressCallback(max_steps)
 
-    args = SFTConfig(output_dir=str(output_dir), seed=seed, report_to="none", save_strategy="none",
+    args = SFTConfig(output_dir=str(output_dir), seed=seed, report_to="none", save_strategy="no",
                      **_precision_flags(), **training_config)
     trainer = SFTTrainer(model=model, args=args, train_dataset=Dataset.from_list(rows),
                          processing_class=tokenizer, peft_config=lora_config,

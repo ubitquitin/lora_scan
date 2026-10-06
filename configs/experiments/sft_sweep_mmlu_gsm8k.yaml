@@ -9,12 +9,12 @@ lora: {rank: 1, alpha: 32, dropout: 0.0, location: late}
 training:
   learning_rate: 1.0e-4
   max_steps: 500
-  per_device_train_batch_size: 16
-  gradient_accumulation_steps: 1
+  per_device_train_batch_size: 4   # Reduced for 12GB GPU
+  gradient_accumulation_steps: 4   # Keeps effective batch size = 16
   max_length: 1024
   logging_steps: 10
   lr_scheduler_type: cosine
-  warmup_ratio: 0.03
+  warmup_steps: 15  # 0.03 * 500 = 15 (equivalent to warmup_ratio=0.03)
 seeds: [42, 123, 456]
 sweep:
   # Sweep across model sizes
