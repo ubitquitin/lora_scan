@@ -15,6 +15,10 @@ training:
   logging_steps: 10
   lr_scheduler_type: cosine
   warmup_steps: 15  # 0.03 * 500 = 15 (equivalent to warmup_ratio=0.03)
+  # Early stopping configuration
+  early_stopping_enabled: true
+  early_stopping_patience: 3       # Stop if no improvement for 3 evaluations
+  early_stopping_eval_steps: 50    # Evaluate every 50 steps
 seeds: [42, 123, 456]
 sweep:
   # Sweep across model sizes
