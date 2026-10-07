@@ -168,25 +168,28 @@ def train_sft(*, model, tokenizer, dataset, prompt, lora_config, training_config
     max_steps = training_config.get("max_steps", 500)
     progress = ProgressCallback(max_steps)
 
+    # Extract custom early stopping parameters (not recognized by SFTConfig)
+    training_config = {**training_config}  # Copy to avoid mutating original
+    early_stopping_enabled = training_config.pop("early_stopping_enabled", False)
+    early_stopping_patience = training_config.pop("early_stopping_patience", 3)
+    early_stopping_eval_steps = training_config.pop("early_stopping_eval_steps", 50)
+
     # Setup early stopping if enabled
     callbacks = [progress.callback]
-    early_stopping_enabled = training_config.get("early_stopping_enabled", False)
     if early_stopping_enabled:
         # Add evaluation strategy for early stopping
-        training_config = {**training_config}  # Copy to avoid mutating original
         training_config["eval_strategy"] = "steps"
-        training_config["eval_steps"] = training_config.get("early_stopping_eval_steps", 50)
+        training_config["eval_steps"] = early_stopping_eval_steps
         training_config["load_best_model_at_end"] = True
         training_config["metric_for_best_model"] = "loss"
         training_config["save_strategy"] = "steps"
-        training_config["save_steps"] = training_config.get("early_stopping_eval_steps", 50)
+        training_config["save_steps"] = early_stopping_eval_steps
         training_config["save_total_limit"] = 1
 
-        early_stopping_patience = training_config.get("early_stopping_patience", 3)
         callbacks.append(EarlyStoppingCallback(early_stopping_patience=early_stopping_patience))
-        print(f"  Early stopping enabled: patience={early_stopping_patience}, eval_steps={training_config['eval_steps']}")
+        print(f"  Early stopping enabled: patience={early_stopping_patience}, eval_steps={early_stopping_eval_steps}")
     else:
-        training_config = {**training_config, "save_strategy": "no"}
+        training_config["save_strategy"] = "no"
 
     args = SFTConfig(output_dir=str(output_dir), seed=seed, report_to="none",
                      **_precision_flags(), **training_config)
