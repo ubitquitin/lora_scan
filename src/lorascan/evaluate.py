@@ -13,12 +13,16 @@ _NUM = r"-?\d[\d,]*\.?\d*"
 
 
 def _norm_number(s: str | None) -> str | None:
+    import math
     if s is None:
         return None
     s = s.replace(",", "").rstrip(".")
     try:
         x = float(s)
     except ValueError:
+        return None
+    # Handle infinity and NaN - treat as invalid predictions
+    if math.isinf(x) or math.isnan(x):
         return None
     return str(int(x)) if x == int(x) else str(x)
 
