@@ -144,12 +144,20 @@ class ProgressCallback:
 
 
 def _info(trainer, output_dir: Path) -> tuple:
+    import math
+
     model = trainer.model
     model.save_pretrained(output_dir)  # adapter weights only
     losses = [h["loss"] for h in trainer.state.log_history if "loss" in h]
+
+    # Sanitize final loss (convert inf/nan to None)
+    final_loss = losses[-1] if losses else None
+    if final_loss is not None and (math.isinf(final_loss) or math.isnan(final_loss)):
+        final_loss = None
+
     info = {
         "trainable_params": sum(p.numel() for p in model.parameters() if p.requires_grad),
-        "final_train_loss": losses[-1] if losses else None,
+        "final_train_loss": final_loss,
         "steps": trainer.state.global_step,
     }
     return model, info

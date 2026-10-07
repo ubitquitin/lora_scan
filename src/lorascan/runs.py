@@ -174,10 +174,28 @@ class Run:
         self.metadata_path.write_text(json.dumps(meta, indent=2, default=str))
 
     def finish(self, per_item: list[dict], metrics: dict) -> None:
+        import math
+
+        def sanitize_value(obj):
+            """Convert inf/nan to None for JSON serialization."""
+            if isinstance(obj, float):
+                if math.isinf(obj) or math.isnan(obj):
+                    return None
+            return obj
+
+        def sanitize_dict(d):
+            """Recursively sanitize a dict."""
+            if isinstance(d, dict):
+                return {k: sanitize_dict(v) for k, v in d.items()}
+            elif isinstance(d, list):
+                return [sanitize_dict(v) for v in d]
+            else:
+                return sanitize_value(d)
+
         with open(self.predictions_path, "w") as f:
             for row in per_item:
-                f.write(json.dumps(row) + "\n")
-        self.metrics_path.write_text(json.dumps(metrics, indent=2))
+                f.write(json.dumps(sanitize_dict(row)) + "\n")
+        self.metrics_path.write_text(json.dumps(sanitize_dict(metrics), indent=2))
         meta = json.loads(self.metadata_path.read_text())
         self.update_meta(status="complete", finished_at=time.time(),
                          duration_s=time.time() - meta["started_at"])
