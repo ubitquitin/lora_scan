@@ -8,16 +8,12 @@ prompt: chat        # base; will be swept (chat = notebook format)
 lora: {rank: 1, alpha: 32, dropout: 0.0, location: late}
 training:
   learning_rate: 1.0e-4
-  num_train_epochs: 1  # Match reference notebook - use epochs instead of max_steps
+  num_train_epochs: 1
   per_device_train_batch_size: 4
   gradient_accumulation_steps: 4
   max_length: 1024
   logging_steps: 25
-  weight_decay: 0.0
-  lr_scheduler_type: cosine
-  warmup_ratio: 0.03
-  save_strategy: "no"  # Disable checkpointing during training
-  eval_strategy: "no"  # Explicitly disable evaluation during training
+  save_strategy: "no"
 seeds: [42, 123, 456]
 sweep:
   # Sweep across model sizes
