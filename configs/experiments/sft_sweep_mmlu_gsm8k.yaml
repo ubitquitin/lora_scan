@@ -17,6 +17,7 @@ training:
   lr_scheduler_type: cosine
   warmup_ratio: 0.03
   save_strategy: "no"  # Disable checkpointing during training
+  eval_strategy: "no"  # Explicitly disable evaluation during training
 seeds: [42, 123, 456]
 sweep:
   # Sweep across model sizes

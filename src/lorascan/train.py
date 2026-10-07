@@ -93,13 +93,16 @@ class ProgressCallback:
                     current_step = state.global_step
                     elapsed = time.time() - self.tracker.start_time
 
+                    # Use trainer's max_steps if available (it recalculates for num_train_epochs)
+                    max_steps = state.max_steps if state.max_steps > 0 else self.tracker.max_steps
+
                     # Calculate progress
-                    progress_pct = (current_step / self.tracker.max_steps) * 100
+                    progress_pct = (current_step / max_steps) * 100 if max_steps > 0 else 0
 
                     # Estimate time remaining
-                    if current_step > 0:
+                    if current_step > 0 and max_steps > 0:
                         avg_time_per_step = elapsed / current_step
-                        remaining_steps = self.tracker.max_steps - current_step
+                        remaining_steps = max_steps - current_step
                         eta_seconds = avg_time_per_step * remaining_steps
 
                         # Format times
@@ -109,12 +112,12 @@ class ProgressCallback:
 
                         # Progress bar
                         bar_width = 40
-                        filled = int(bar_width * current_step / self.tracker.max_steps)
+                        filled = int(bar_width * current_step / max_steps)
                         bar = '█' * filled + '░' * (bar_width - filled)
 
                         # Print progress update
                         print(f"\r[{bar}] {progress_pct:5.1f}% | "
-                              f"Step {current_step}/{self.tracker.max_steps} | "
+                              f"Step {current_step}/{max_steps} | "
                               f"Loss: {logs['loss']:.4f} | "
                               f"Elapsed: {elapsed_str} | "
                               f"ETA: {eta_str} | "
@@ -172,8 +175,18 @@ def train_sft(*, model, tokenizer, dataset, prompt, lora_config, training_config
     rows = [{"prompt": render_prompt(tokenizer, it, prompt),
              "completion": render_target(it, prompt) + eos} for it in dataset]
 
-    # Create progress callback
-    max_steps = training_config.get("max_steps", 500)
+    # Create progress callback - max_steps will be set by trainer if using num_train_epochs
+    # For now, estimate it or wait for trainer to set it
+    max_steps = training_config.get("max_steps")
+    if max_steps is None and "num_train_epochs" in training_config:
+        # Rough estimate: epochs * dataset_size / (batch_size * grad_accum)
+        batch_size = training_config.get("per_device_train_batch_size", 4)
+        grad_accum = training_config.get("gradient_accumulation_steps", 1)
+        epochs = training_config["num_train_epochs"]
+        max_steps = int(len(rows) * epochs / (batch_size * grad_accum))
+    elif max_steps is None:
+        max_steps = 500  # default fallback
+
     progress = ProgressCallback(max_steps)
 
     # Extract custom early stopping parameters (not recognized by SFTConfig)
