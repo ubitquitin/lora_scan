@@ -1,3 +1,0 @@
-# Optional dependencies for development
--r requirements.txt
-pytest
