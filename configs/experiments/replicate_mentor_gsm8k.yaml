@@ -1,0 +1,43 @@
+# Replication of mentor's qwen 0.5b GSM8K setup
+# Goal: Match mentor's GSM8K accuracy ~0.31
+#
+# Key parameters from mentor's notebook:
+# - LoRA: r=8, alpha=16, dropout=0.05, late 8 layers (blocks 16-23)
+# - Training: LR=5e-5, 1 epoch, batch=4, grad_accum=4
+# - Full GSM8K train: 7473 examples
+# - System prompt: "You are a math tutor. Solve step by step, give final answer as #### <number>"
+
+name: replicate_mentor_gsm8k
+method: sft
+model: qwen25-0.5b
+dataset: gsm8k
+prompt: chat_gsm8k  # Includes system prompt for math tutor
+
+lora:
+  rank: 8
+  alpha: 16
+  dropout: 0.05
+  location: late  # 8 late layers (blocks 16-23)
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]  # Mentor includes MLP
+
+training:
+  learning_rate: 5.0e-5
+  num_train_epochs: 1
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 4  # Effective batch = 16
+  max_length: 1024
+  logging_steps: 25
+  save_strategy: "no"
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.05
+
+data:
+  max_train_samples: null  # Use full training set (7473 examples)
+  max_eval_samples: 200    # Mentor uses 200 for eval
+
+evaluation:
+  max_new_tokens: 512
+  batch_size: 32  # Mentor uses 32 for GSM8K eval
+  temperature: 0.0
+
+seeds: [42]
