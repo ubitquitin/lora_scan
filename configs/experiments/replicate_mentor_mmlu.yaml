@@ -29,7 +29,7 @@ training:
   logging_steps: 25
   save_strategy: "no"
   lr_scheduler_type: cosine
-  warmup_ratio: 0.05
+  warmup_steps: 6  # ~5% of 114 total steps (1816 samples / 16 effective batch)
 
 data:
   max_train_samples: null  # Use full training set (1816 examples)
