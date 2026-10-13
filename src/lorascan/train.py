@@ -94,7 +94,7 @@ class ProgressCallback:
                     elapsed = time.time() - self.tracker.start_time
 
                     # Use trainer's max_steps if available (it recalculates for num_train_epochs)
-                    max_steps = state.max_steps if state.max_steps > 0 else self.tracker.max_steps
+                    max_steps = state.max_steps if (state.max_steps is not None and state.max_steps > 0) else self.tracker.max_steps
 
                     # Calculate progress
                     progress_pct = (current_step / max_steps) * 100 if max_steps > 0 else 0
@@ -194,6 +194,10 @@ def train_sft(*, model, tokenizer, dataset, prompt, lora_config, training_config
     early_stopping_enabled = training_config.pop("early_stopping_enabled", False)
     early_stopping_patience = training_config.pop("early_stopping_patience", 3)
     early_stopping_eval_steps = training_config.pop("early_stopping_eval_steps", 50)
+
+    # Remove max_steps if it's None (let SFTConfig use num_train_epochs instead)
+    if training_config.get("max_steps") is None:
+        training_config.pop("max_steps", None)
 
     # Setup early stopping if enabled
     callbacks = [progress.callback]
