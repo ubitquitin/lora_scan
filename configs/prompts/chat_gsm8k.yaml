@@ -1,0 +1,8 @@
+name: chat_gsm8k
+# Chat format with system prompt for GSM8K math problems
+# Matches mentor's notebook setup
+system: |
+  You are a math tutor. Solve the problem step by step, then give the final numeric answer on a new line in the format: #### <number>
+template: |
+  {question}
+target: full
