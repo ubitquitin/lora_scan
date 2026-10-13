@@ -1,0 +1,9 @@
+name: mmlu_gsm8k_combined
+# Special combined dataset - trains on both MMLU and GSM8K
+# Evaluates on both benchmarks separately
+type: combined
+datasets:
+  - mmlu
+  - gsm8k
+# For evaluation, still evaluate each separately
+evaluator: combined  # Will evaluate both and report separately

@@ -94,10 +94,80 @@ class MultipleChoiceEvaluator(Evaluator):
         return hits[-1] if hits else None
 
 
+class CombinedEvaluator(Evaluator):
+    """Routes to the correct evaluator based on source_dataset tag."""
+
+    def __init__(self):
+        self.evaluators = {
+            "mmlu": MultipleChoiceEvaluator(),
+            "gsm8k": GSM8KEvaluator(),
+        }
+
+    def extract(self, completion):
+        # This shouldn't be called directly on combined - use per_item instead
+        raise NotImplementedError("CombinedEvaluator requires source_dataset in per_item")
+
+    def per_item(self, predictions: list[dict]) -> list[dict]:
+        """Evaluate each item with its appropriate evaluator."""
+        rows = []
+        for p in predictions:
+            source = p.get("source_dataset")
+            if not source or source not in self.evaluators:
+                # Fallback - try both evaluators and use whichever succeeds
+                pred = None
+                for ev in self.evaluators.values():
+                    pred = ev.extract(p["completion"])
+                    if pred is not None:
+                        break
+            else:
+                evaluator = self.evaluators[source]
+                pred = evaluator.extract(p["completion"])
+
+            rows.append({
+                "item_id": p["item_id"],
+                "prediction": pred,
+                "gold": p["gold"],
+                "correct": bool(pred is not None and pred == p["gold"]),
+                "completion_tokens": p.get("completion_tokens"),
+                "completion": p["completion"],
+                "source_dataset": p.get("source_dataset"),
+            })
+        return rows
+
+    def evaluate(self, predictions: list[dict]) -> dict:
+        """Evaluate with breakdown by source dataset."""
+        rows = self.per_item(predictions)
+
+        # Overall metrics
+        n = len(rows)
+        n_correct = sum(r["correct"] for r in rows)
+        toks = [r["completion_tokens"] for r in rows if r["completion_tokens"] is not None]
+
+        result = {
+            "accuracy": n_correct / n if n else 0.0,
+            "n": n,
+            "n_correct": n_correct,
+            "n_unparsed": sum(r["prediction"] is None for r in rows),
+            "mean_completion_tokens": sum(toks) / len(toks) if toks else None,
+        }
+
+        # Add per-dataset breakdown
+        for source in set(r.get("source_dataset") for r in rows if r.get("source_dataset")):
+            subset = [r for r in rows if r.get("source_dataset") == source]
+            n_sub = len(subset)
+            n_correct_sub = sum(r["correct"] for r in subset)
+            result[f"{source}_accuracy"] = n_correct_sub / n_sub if n_sub else 0.0
+            result[f"{source}_n"] = n_sub
+            result[f"{source}_n_correct"] = n_correct_sub
+
+        return result
+
+
 EVALUATORS = {
     "exact_match": ExactMatchEvaluator,
     "multiple_choice": MultipleChoiceEvaluator,
     "gsm8k": GSM8KEvaluator,
+    "combined": CombinedEvaluator,
 }
 
 
@@ -135,8 +205,32 @@ FORMATTERS = {"gsm8k": _fmt_gsm8k, "multiple_choice": _fmt_mc, "exact_match": _f
 
 def load_items(dataset_cfg: dict, data_cfg: dict, split: str, limit: int | None = None) -> list[dict]:
     """Load a split as a list of items. Subsampling uses a FIXED seed so every run sees the same items."""
-    from datasets import load_dataset
+    from datasets import load_dataset, concatenate_datasets
+    from . import runs
 
+    # Handle combined datasets
+    if dataset_cfg.get("type") == "combined":
+        all_items = []
+        for dataset_name in dataset_cfg["datasets"]:
+            sub_cfg = runs.load_component("datasets", dataset_name)
+            sub_items = load_items(sub_cfg, data_cfg, split, limit=None)
+            # Tag items with source dataset for debugging
+            for item in sub_items:
+                item["source_dataset"] = dataset_name
+            all_items.extend(sub_items)
+
+        # Shuffle combined items
+        import random
+        rng = random.Random(data_cfg.get("subsample_seed", 0))
+        rng.shuffle(all_items)
+
+        # Apply limit after combining
+        if limit and limit < len(all_items):
+            all_items = all_items[:limit]
+
+        return all_items
+
+    # Regular single dataset loading
     ds = load_dataset(dataset_cfg["hf_id"], dataset_cfg.get("subset"),
                       split=dataset_cfg[f"{split}_split"], revision=dataset_cfg.get("revision"))
     ds = ds.add_column("_idx", list(range(len(ds))))
@@ -152,18 +246,32 @@ def load_items(dataset_cfg: dict, data_cfg: dict, split: str, limit: int | None 
 
 
 # ------------------------------------------------------------------ prompting + generation
+def _get_prompt_for_item(item: dict, prompt_cfg: dict) -> dict:
+    """Get the appropriate prompt config for an item, handling combined datasets."""
+    # If prompt_cfg has a 'prompts' dict (for combined datasets), route by source_dataset
+    if "prompts" in prompt_cfg:
+        source = item.get("source_dataset")
+        if source and source in prompt_cfg["prompts"]:
+            return prompt_cfg["prompts"][source]
+        # Fallback to first prompt if source not found
+        return list(prompt_cfg["prompts"].values())[0]
+    return prompt_cfg
+
+
 def render_prompt(tokenizer, item: dict, prompt_cfg: dict) -> str:
-    text = prompt_cfg["template"].replace("{question}", item["question"]).strip()
+    cfg = _get_prompt_for_item(item, prompt_cfg)
+    text = cfg["template"].replace("{question}", item["question"]).strip()
     if getattr(tokenizer, "chat_template", None):
         messages = [{"role": "user", "content": text}]
-        if prompt_cfg.get("system"):
-            messages.insert(0, {"role": "system", "content": prompt_cfg["system"]})
+        if cfg.get("system"):
+            messages.insert(0, {"role": "system", "content": cfg["system"]})
         return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     return text + "\n"
 
 
 def render_target(item: dict, prompt_cfg: dict) -> str:
-    return item["target_short"] if prompt_cfg.get("target", "full") == "short" else item["target"]
+    cfg = _get_prompt_for_item(item, prompt_cfg)
+    return item["target_short"] if cfg.get("target", "full") == "short" else item["target"]
 
 
 def generate_predictions(model, tokenizer, items: list[dict], prompt_cfg: dict, eval_cfg: dict) -> list[dict]:
@@ -192,8 +300,12 @@ def generate_predictions(model, tokenizer, items: list[dict], prompt_cfg: dict, 
             gen = out[:, batch["input_ids"].shape[1]:]
             texts = tokenizer.batch_decode(gen, skip_special_tokens=True)
             for it, text, g in zip(items[i:i + bs], texts, gen):
-                preds.append({"item_id": it["item_id"], "completion": text, "gold": it["gold"],
-                              "completion_tokens": int((g != tokenizer.pad_token_id).sum())})
+                pred = {"item_id": it["item_id"], "completion": text, "gold": it["gold"],
+                        "completion_tokens": int((g != tokenizer.pad_token_id).sum())}
+                # Carry through source_dataset for combined evaluators
+                if "source_dataset" in it:
+                    pred["source_dataset"] = it["source_dataset"]
+                preds.append(pred)
     finally:
         tokenizer.padding_side = prev_side
     return preds

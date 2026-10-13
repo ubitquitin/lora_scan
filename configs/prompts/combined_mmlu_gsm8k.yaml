@@ -1,0 +1,13 @@
+name: combined_mmlu_gsm8k
+# Combined prompt config - routes to appropriate prompt based on source_dataset
+# MMLU uses chat (no system prompt), GSM8K uses chat_gsm8k (with system prompt)
+prompts:
+  mmlu:
+    template: |
+      {question}
+    target: full
+  gsm8k:
+    system: "You are a math tutor. Solve the problem step by step, then give the final numeric answer on a new line in the format: #### <number>"
+    template: |
+      {question}
+    target: full
