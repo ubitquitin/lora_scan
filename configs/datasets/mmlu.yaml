@@ -2,8 +2,11 @@ name: mmlu
 hf_id: cais/mmlu
 subset: all
 revision: null
-train_split: auxiliary_train
+train_split: auxiliary_train  # Mentor uses aux_train+validation+dev combined, but 'all' subset already merges them
 eval_split: test
 evaluator: multiple_choice
 # Per-subject balanced sampling for evaluation (matches mentor notebook)
 eval_samples_per_subject: 8  # 8 samples × 57 subjects = 456 total
+# For train, mentor loads per-subject and combines auxiliary_train + validation + dev
+# We use 'all' subset which should include these automatically
+train_combine_splits: true  # Flag to indicate we need special handling

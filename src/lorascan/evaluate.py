@@ -242,6 +242,8 @@ def load_items(dataset_cfg: dict, data_cfg: dict, split: str, limit: int | None 
     if is_mmlu_eval:
         # Load each subject separately and sample
         from datasets import concatenate_datasets
+        print(f"  Loading MMLU with per-subject sampling: {samples_per_subject} samples × 57 subjects = {samples_per_subject * 57} total")
+        print(f"  This may take 5-10 minutes on first run (downloading datasets)...")
 
         # MMLU subject list (all 57 subjects)
         subjects = [
@@ -269,7 +271,9 @@ def load_items(dataset_cfg: dict, data_cfg: dict, split: str, limit: int | None 
         all_parts = []
         seed = data_cfg.get("subsample_seed", 42)
 
-        for subject in subjects:
+        for i, subject in enumerate(subjects, 1):
+            if i % 10 == 1:  # Progress update every 10 subjects
+                print(f"  Loading MMLU subjects: {i}/{len(subjects)}...", flush=True)
             subject_ds = load_dataset("cais/mmlu", subject, split="test",
                                      revision=dataset_cfg.get("revision"))
             subject_ds = subject_ds.add_column("_idx",
@@ -279,6 +283,8 @@ def load_items(dataset_cfg: dict, data_cfg: dict, split: str, limit: int | None 
             n_samples = min(samples_per_subject, len(subject_ds))
             subject_ds = subject_ds.select(range(n_samples))
             all_parts.append(subject_ds)
+
+        print(f"  Loaded all 57 MMLU subjects, combining...", flush=True)
 
         # Combine all subjects and shuffle again
         ds = concatenate_datasets(all_parts).shuffle(seed=seed)
