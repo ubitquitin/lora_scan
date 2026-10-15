@@ -230,6 +230,17 @@ def load_items(dataset_cfg: dict, data_cfg: dict, split: str, limit: int | None 
         if limit and limit < len(all_items):
             all_items = all_items[:limit]
 
+        # Debug: Show what we loaded
+        if split == "eval":
+            print(f"  Combined {split} dataset loaded:")
+            source_counts = {}
+            for item in all_items:
+                source = item.get("source_dataset", "unknown")
+                source_counts[source] = source_counts.get(source, 0) + 1
+            for source, count in sorted(source_counts.items()):
+                print(f"    {source}: {count} samples")
+            print(f"    Total: {len(all_items)} samples")
+
         return all_items
 
     # Special handling for MMLU per-subject balanced sampling (mentor notebook style)
@@ -300,9 +311,11 @@ def load_items(dataset_cfg: dict, data_cfg: dict, split: str, limit: int | None 
     # Regular single dataset loading (all non-MMLU datasets, and MMLU train split)
     ds = load_dataset(dataset_cfg["hf_id"], dataset_cfg.get("subset"),
                       split=dataset_cfg[f"{split}_split"], revision=dataset_cfg.get("revision"))
+    original_size = len(ds)
     ds = ds.add_column("_idx", list(range(len(ds))))
     if limit and limit < len(ds):
         ds = ds.shuffle(seed=data_cfg.get("subsample_seed", 0)).select(range(limit))
+        print(f"  {dataset_cfg['name']} {split}: Limited from {original_size} to {len(ds)} samples (limit={limit})", flush=True)
     fmt = FORMATTERS[dataset_cfg["evaluator"]]
     items = []
     for ex in ds:
