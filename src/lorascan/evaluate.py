@@ -243,18 +243,13 @@ def load_items(dataset_cfg: dict, data_cfg: dict, split: str, limit: int | None 
 
         return all_items
 
-    # Special handling for MMLU per-subject balanced sampling (mentor notebook style)
-    # Only applies to eval split when eval_samples_per_subject is set
-    samples_per_subject = dataset_cfg.get("eval_samples_per_subject")
-    is_mmlu_eval = (dataset_cfg["hf_id"] == "cais/mmlu" and
-                    split == "eval" and
-                    samples_per_subject is not None)
+    # Special handling for MMLU per-subject loading (mentor notebook style)
+    # Applies to both train and eval when subset is 'per_subject'
+    is_mmlu_per_subject = (dataset_cfg["hf_id"] == "cais/mmlu" and
+                           dataset_cfg.get("subset") == "per_subject")
 
-    if is_mmlu_eval:
-        # Load each subject separately and sample
+    if is_mmlu_per_subject:
         from datasets import concatenate_datasets
-        print(f"  Loading MMLU with per-subject sampling: {samples_per_subject} samples × 57 subjects = {samples_per_subject * 57} total")
-        print(f"  This may take 5-10 minutes on first run (downloading datasets)...")
 
         # MMLU subject list (all 57 subjects)
         subjects = [
@@ -279,27 +274,62 @@ def load_items(dataset_cfg: dict, data_cfg: dict, split: str, limit: int | None 
             'virology', 'world_religions'
         ]
 
-        all_parts = []
         seed = data_cfg.get("subsample_seed", 42)
+        all_parts = []
 
-        for i, subject in enumerate(subjects, 1):
-            if i % 10 == 1:  # Progress update every 10 subjects
-                print(f"  Loading MMLU subjects: {i}/{len(subjects)}...", flush=True)
-            subject_ds = load_dataset("cais/mmlu", subject, split="test",
-                                     revision=dataset_cfg.get("revision"))
-            subject_ds = subject_ds.add_column("_idx",
-                                              [f"{subject}-{i}" for i in range(len(subject_ds))])
-            # Shuffle and take first N samples per subject
-            subject_ds = subject_ds.shuffle(seed=seed)
-            n_samples = min(samples_per_subject, len(subject_ds))
-            subject_ds = subject_ds.select(range(n_samples))
-            all_parts.append(subject_ds)
+        if split == "train":
+            # Train: Combine auxiliary_train + validation + dev per subject (mentor notebook)
+            combine_splits = dataset_cfg.get("train_combine_splits", ["auxiliary_train"])
+            print(f"  Loading MMLU train per-subject: combining {combine_splits} for 57 subjects")
+            print(f"  This may take 5-10 minutes on first run (downloading datasets)...")
 
-        print(f"  Loaded all 57 MMLU subjects, combining...", flush=True)
+            for i, subject in enumerate(subjects, 1):
+                if i % 10 == 1:
+                    print(f"  Loading MMLU subjects: {i}/{len(subjects)}...", flush=True)
 
-        # Combine all subjects and shuffle again
-        ds = concatenate_datasets(all_parts).shuffle(seed=seed)
+                # Load full subject dataset
+                subject_full = load_dataset("cais/mmlu", subject, revision=dataset_cfg.get("revision"))
 
+                # Combine specified splits for this subject
+                subject_parts = []
+                for split_name in combine_splits:
+                    if split_name in subject_full:
+                        ds_part = subject_full[split_name]
+                        subject_parts.append(ds_part)
+
+                if subject_parts:
+                    subject_ds = concatenate_datasets(subject_parts)
+                    subject_ds = subject_ds.add_column("_idx",
+                                                      [f"{subject}-{j}" for j in range(len(subject_ds))])
+                    all_parts.append(subject_ds)
+
+            print(f"  Loaded all 57 MMLU subjects, combining...", flush=True)
+            ds = concatenate_datasets(all_parts).shuffle(seed=seed)
+            print(f"  MMLU train: {len(ds)} examples from {len(subjects)} subjects", flush=True)
+
+        else:  # eval split
+            # Eval: Sample N per subject (mentor notebook)
+            samples_per_subject = dataset_cfg.get("eval_samples_per_subject", 8)
+            print(f"  Loading MMLU eval per-subject: {samples_per_subject} samples × 57 subjects = {samples_per_subject * 57} total")
+            print(f"  This may take 5-10 minutes on first run (downloading datasets)...")
+
+            for i, subject in enumerate(subjects, 1):
+                if i % 10 == 1:
+                    print(f"  Loading MMLU subjects: {i}/{len(subjects)}...", flush=True)
+                subject_ds = load_dataset("cais/mmlu", subject, split="test",
+                                         revision=dataset_cfg.get("revision"))
+                subject_ds = subject_ds.add_column("_idx",
+                                                  [f"{subject}-{j}" for j in range(len(subject_ds))])
+                # Shuffle and take first N samples per subject
+                subject_ds = subject_ds.shuffle(seed=seed)
+                n_samples = min(samples_per_subject, len(subject_ds))
+                subject_ds = subject_ds.select(range(n_samples))
+                all_parts.append(subject_ds)
+
+            print(f"  Loaded all 57 MMLU subjects, combining...", flush=True)
+            ds = concatenate_datasets(all_parts).shuffle(seed=seed)
+
+        # Convert to items
         fmt = FORMATTERS[dataset_cfg["evaluator"]]
         items = []
         for ex in ds:
@@ -308,7 +338,7 @@ def load_items(dataset_cfg: dict, data_cfg: dict, split: str, limit: int | None 
             items.append(item)
         return items
 
-    # Regular single dataset loading (all non-MMLU datasets, and MMLU train split)
+    # Regular single dataset loading (all non-per-subject datasets)
     ds = load_dataset(dataset_cfg["hf_id"], dataset_cfg.get("subset"),
                       split=dataset_cfg[f"{split}_split"], revision=dataset_cfg.get("revision"))
     original_size = len(ds)
