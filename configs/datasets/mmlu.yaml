@@ -5,3 +5,5 @@ revision: null
 train_split: auxiliary_train
 eval_split: test
 evaluator: multiple_choice
+# Per-subject balanced sampling for evaluation (matches mentor notebook)
+eval_samples_per_subject: 8  # 8 samples × 57 subjects = 456 total

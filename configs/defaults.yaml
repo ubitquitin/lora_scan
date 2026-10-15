@@ -10,7 +10,7 @@ lora:
 data:
   max_train_samples: null   # null = full split
   max_eval_samples: null
-  subsample_seed: 0         # FIXED so every run sees the same items (needed for paired tests)
+  subsample_seed: 42        # Match mentor notebook seed (was 0)
 
 evaluation:
   max_new_tokens: 512

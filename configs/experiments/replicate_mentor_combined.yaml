@@ -35,7 +35,7 @@ training:
 
 data:
   max_train_samples: null  # Use full combined training set (9289 examples)
-  max_eval_samples: null   # Evaluate on full test sets
+  max_eval_samples: null   # Overridden per dataset: MMLU uses eval_samples_per_subject, GSM8K needs specific handling
 
 evaluation:
   max_new_tokens: 512

@@ -213,7 +213,9 @@ def load_items(dataset_cfg: dict, data_cfg: dict, split: str, limit: int | None 
         all_items = []
         for dataset_name in dataset_cfg["datasets"]:
             sub_cfg = runs.load_component("datasets", dataset_name)
-            sub_items = load_items(sub_cfg, data_cfg, split, limit=None)
+            # Use dataset-specific limit if defined (e.g., eval_limit for GSM8K)
+            sub_limit = sub_cfg.get(f"{split}_limit") if split == "eval" else None
+            sub_items = load_items(sub_cfg, data_cfg, split, limit=sub_limit)
             # Tag items with source dataset for debugging
             for item in sub_items:
                 item["source_dataset"] = dataset_name
@@ -221,16 +223,75 @@ def load_items(dataset_cfg: dict, data_cfg: dict, split: str, limit: int | None 
 
         # Shuffle combined items
         import random
-        rng = random.Random(data_cfg.get("subsample_seed", 0))
+        rng = random.Random(data_cfg.get("subsample_seed", 42))
         rng.shuffle(all_items)
 
-        # Apply limit after combining
+        # Apply overall limit after combining (if specified)
         if limit and limit < len(all_items):
             all_items = all_items[:limit]
 
         return all_items
 
-    # Regular single dataset loading
+    # Special handling for MMLU per-subject balanced sampling (mentor notebook style)
+    # Only applies to eval split when eval_samples_per_subject is set
+    samples_per_subject = dataset_cfg.get("eval_samples_per_subject")
+    is_mmlu_eval = (dataset_cfg["hf_id"] == "cais/mmlu" and
+                    split == "eval" and
+                    samples_per_subject is not None)
+
+    if is_mmlu_eval:
+        # Load each subject separately and sample
+        from datasets import concatenate_datasets
+
+        # MMLU subject list (all 57 subjects)
+        subjects = [
+            'abstract_algebra', 'anatomy', 'astronomy', 'business_ethics',
+            'clinical_knowledge', 'college_biology', 'college_chemistry',
+            'college_computer_science', 'college_mathematics', 'college_medicine',
+            'college_physics', 'computer_security', 'conceptual_physics',
+            'econometrics', 'electrical_engineering', 'elementary_mathematics',
+            'formal_logic', 'global_facts', 'high_school_biology',
+            'high_school_chemistry', 'high_school_computer_science',
+            'high_school_european_history', 'high_school_geography',
+            'high_school_government_and_politics', 'high_school_macroeconomics',
+            'high_school_mathematics', 'high_school_microeconomics',
+            'high_school_physics', 'high_school_psychology', 'high_school_statistics',
+            'high_school_us_history', 'high_school_world_history', 'human_aging',
+            'human_sexuality', 'international_law', 'jurisprudence',
+            'logical_fallacies', 'machine_learning', 'management', 'marketing',
+            'medical_genetics', 'miscellaneous', 'moral_disputes', 'moral_scenarios',
+            'nutrition', 'philosophy', 'prehistory', 'professional_accounting',
+            'professional_law', 'professional_medicine', 'professional_psychology',
+            'public_relations', 'security_studies', 'sociology', 'us_foreign_policy',
+            'virology', 'world_religions'
+        ]
+
+        all_parts = []
+        seed = data_cfg.get("subsample_seed", 42)
+
+        for subject in subjects:
+            subject_ds = load_dataset("cais/mmlu", subject, split="test",
+                                     revision=dataset_cfg.get("revision"))
+            subject_ds = subject_ds.add_column("_idx",
+                                              [f"{subject}-{i}" for i in range(len(subject_ds))])
+            # Shuffle and take first N samples per subject
+            subject_ds = subject_ds.shuffle(seed=seed)
+            n_samples = min(samples_per_subject, len(subject_ds))
+            subject_ds = subject_ds.select(range(n_samples))
+            all_parts.append(subject_ds)
+
+        # Combine all subjects and shuffle again
+        ds = concatenate_datasets(all_parts).shuffle(seed=seed)
+
+        fmt = FORMATTERS[dataset_cfg["evaluator"]]
+        items = []
+        for ex in ds:
+            item = fmt(ex, dataset_cfg)
+            item["item_id"] = f"{split}-{ex['_idx']}"
+            items.append(item)
+        return items
+
+    # Regular single dataset loading (all non-MMLU datasets, and MMLU train split)
     ds = load_dataset(dataset_cfg["hf_id"], dataset_cfg.get("subset"),
                       split=dataset_cfg[f"{split}_split"], revision=dataset_cfg.get("revision"))
     ds = ds.add_column("_idx", list(range(len(ds))))

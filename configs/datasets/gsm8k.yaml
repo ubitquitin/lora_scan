@@ -5,3 +5,5 @@ revision: null
 train_split: train
 eval_split: test
 evaluator: gsm8k
+# Match mentor notebook: only 200 eval samples
+eval_limit: 200
