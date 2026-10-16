@@ -99,7 +99,8 @@ def main():
         try:
             gpu_info = train.verify_gpu()
             print(f"GPU detected: {gpu_info['device_name']} ({gpu_info['memory_gb']}GB, "
-                  f"{'bf16' if gpu_info['supports_bf16'] else 'fp16'} precision)\n")
+                  f"GPU supports {'bf16' if gpu_info['supports_bf16'] else 'fp16'})\n")
+            print(f"Training will use: fp16 (explicit, matching mentor)\n")
         except RuntimeError as e:
             print(f"ERROR: {e}", file=sys.stderr)
             sys.exit(1)

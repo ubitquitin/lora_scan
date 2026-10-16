@@ -98,11 +98,14 @@ class ProgressCallback:
                     # Use trainer's max_steps if available (it recalculates for num_train_epochs)
                     max_steps = state.max_steps if (state.max_steps is not None and state.max_steps > 0) else self.tracker.max_steps
 
-                    # Calculate progress
-                    progress_pct = (current_step / max_steps) * 100 if max_steps > 0 else 0
+                    # Calculate progress (handle None case)
+                    if max_steps is None or max_steps <= 0:
+                        progress_pct = 0
+                    else:
+                        progress_pct = (current_step / max_steps) * 100
 
                     # Estimate time remaining
-                    if current_step > 0 and max_steps > 0:
+                    if current_step > 0 and max_steps is not None and max_steps > 0:
                         avg_time_per_step = elapsed / current_step
                         remaining_steps = max_steps - current_step
                         eta_seconds = avg_time_per_step * remaining_steps
