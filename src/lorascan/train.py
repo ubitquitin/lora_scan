@@ -178,28 +178,39 @@ def train_sft(*, model, tokenizer, dataset, prompt, lora_config, training_config
     from datasets import Dataset
     from trl import SFTConfig, SFTTrainer
     from transformers import EarlyStoppingCallback
-
-    # DataCollatorForCompletionOnlyLM moved from trl to transformers in newer versions
-    try:
-        from transformers import DataCollatorForCompletionOnlyLM
-    except ImportError:
-        from trl import DataCollatorForCompletionOnlyLM
+    import trl
 
     # Prepare dataset in mentor's format: single "text" field with full chat template
     rows = [{"text": render_training_text(tokenizer, it, prompt)} for it in dataset]
 
-    # Create response template for loss masking (mentor's approach)
-    # This masks loss on prompt tokens, only training on completion
+    # Setup completion-only loss masking (matches mentor)
+    # In TRL < 0.20: use DataCollatorForCompletionOnlyLM
+    # In TRL >= 0.20: use completion_only_loss=True parameter
     assistant_prefix = get_assistant_prefix(tokenizer)
     response_template_ids = tokenizer.encode(assistant_prefix, add_special_tokens=False)
 
     print(f"  Response template: {repr(assistant_prefix)}")
     print(f"  Response template IDs: {response_template_ids}")
 
-    collator = DataCollatorForCompletionOnlyLM(
-        response_template=response_template_ids,
-        tokenizer=tokenizer,
-    )
+    # Check TRL version to determine approach
+    trl_version = tuple(map(int, trl.__version__.split('.')[:2]))
+    use_new_approach = trl_version >= (0, 20)
+
+    if use_new_approach:
+        print(f"  Using TRL {trl.__version__} completion_only_loss parameter")
+        collator = None  # Not needed in new versions
+        # Will add completion_only_loss to training_config below
+    else:
+        print(f"  Using TRL {trl.__version__} DataCollatorForCompletionOnlyLM")
+        try:
+            from transformers import DataCollatorForCompletionOnlyLM
+        except ImportError:
+            from trl import DataCollatorForCompletionOnlyLM
+
+        collator = DataCollatorForCompletionOnlyLM(
+            response_template=response_template_ids,
+            tokenizer=tokenizer,
+        )
 
     # Create progress callback - max_steps will be set by trainer if using num_train_epochs
     # For now, estimate it or wait for trainer to set it
@@ -243,18 +254,28 @@ def train_sft(*, model, tokenizer, dataset, prompt, lora_config, training_config
         training_config["save_strategy"] = "no"
 
     # Match mentor exactly: use explicit fp16 from config, not dynamic detection
+    # Add completion_only_loss for TRL >= 0.20 (new approach)
+    if use_new_approach:
+        training_config = {**training_config, "completion_only_loss": True}
+
     args = SFTConfig(output_dir=str(output_dir), seed=seed, report_to="none",
                      **training_config)
-    trainer = SFTTrainer(
-        model=model,
-        args=args,
-        train_dataset=Dataset.from_list(rows),
-        eval_dataset=Dataset.from_list(rows[:min(100, len(rows))]) if early_stopping_enabled else None,
-        processing_class=tokenizer,
-        peft_config=lora_config,
-        data_collator=collator,  # ← Loss masking: only train on completion tokens
-        callbacks=callbacks,
-    )
+
+    # Build trainer (with or without data_collator depending on TRL version)
+    trainer_kwargs = {
+        "model": model,
+        "args": args,
+        "train_dataset": Dataset.from_list(rows),
+        "eval_dataset": Dataset.from_list(rows[:min(100, len(rows))]) if early_stopping_enabled else None,
+        "processing_class": tokenizer,
+        "peft_config": lora_config,
+        "callbacks": callbacks,
+    }
+
+    if not use_new_approach:
+        trainer_kwargs["data_collator"] = collator  # Only needed for old TRL versions
+
+    trainer = SFTTrainer(**trainer_kwargs)
 
     # Reset VRAM stats and start timer
     if torch.cuda.is_available():
