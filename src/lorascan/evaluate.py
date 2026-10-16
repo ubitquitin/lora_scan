@@ -8,6 +8,29 @@ from __future__ import annotations
 
 import re
 
+
+# ------------------------------------------------------------------ chat template utilities
+def get_assistant_prefix(tokenizer) -> str:
+    """Extract the assistant turn prefix from tokenizer's chat template.
+
+    Returns the string that appears between the user message and assistant message
+    in a chat-formatted conversation. This is used for:
+    1. Loss masking (DataCollatorForCompletionOnlyLM response_template)
+    2. Evaluation prompts (where to append "Answer:")
+
+    Matches mentor's implementation using sentinel tokens to avoid ambiguity.
+    """
+    _USER = '⚙USR⚙'
+    _ASST = '⚙AST⚙'
+    probe = tokenizer.apply_chat_template(
+        [{'role': 'user',      'content': _USER},
+         {'role': 'assistant', 'content': _ASST}],
+        tokenize=False, add_generation_prompt=False
+    )
+    start = probe.rfind(_USER) + len(_USER)
+    end   = probe.rfind(_ASST)
+    return probe[start:end]
+
 # ------------------------------------------------------------------ evaluators
 _NUM = r"-?\d[\d,]*\.?\d*"
 
@@ -69,15 +92,32 @@ class ExactMatchEvaluator(Evaluator):
 
 
 class GSM8KEvaluator(Evaluator):
-    """Final numeric answer: after '####', else after 'final answer', else last number."""
+    """Final numeric answer: \boxed{}, then '####', then 'final answer', else last number.
+
+    Priority order matches mentor's notebook:
+    1. \boxed{number} format
+    2. #### number format
+    3. "final answer" followed by number
+    4. Last number in text
+    """
 
     def extract(self, completion):
+        # Priority 1: \boxed{} format (mentor's notebook checks this first)
+        boxes = re.findall(r'\\boxed\{(' + _NUM + r')\}', completion)
+        if boxes:
+            return _norm_number(boxes[-1])
+
+        # Priority 2: #### format (standard GSM8K format)
         if "####" in completion:
             nums = re.findall(_NUM, completion.split("####")[-1])
             return _norm_number(nums[0]) if nums else None
+
+        # Priority 3: "final answer" phrase
         hits = re.findall(rf"final answer[^\d\-]*({_NUM})", completion, flags=re.I)
         if hits:
             return _norm_number(hits[-1])
+
+        # Priority 4: Last number anywhere in completion
         nums = re.findall(_NUM, completion)
         return _norm_number(nums[-1]) if nums else None
 
@@ -170,11 +210,84 @@ EVALUATORS = {
     "combined": CombinedEvaluator,
 }
 
+# Evaluators that should use logit-based evaluation instead of generation
+LOGIT_BASED_EVALUATORS = {"multiple_choice"}
+
 
 def get_evaluator(name: str) -> Evaluator:
     if name not in EVALUATORS:
         raise KeyError(f"Unknown evaluator {name!r}. Known: {sorted(EVALUATORS)}")
     return EVALUATORS[name]()
+
+
+def evaluate_predictions(model, tokenizer, items: list[dict], prompt_cfg: dict, eval_cfg: dict,
+                        dataset_cfg: dict) -> tuple[list[dict], dict]:
+    """Route to appropriate evaluation method based on dataset type.
+
+    - Multiple choice (MMLU): Uses logit-based evaluation (faster, matches mentor)
+    - GSM8K: Uses generation-based evaluation
+    - Combined: Routes each subset appropriately
+
+    Returns (predictions, eval_metrics).
+    """
+    evaluator_name = dataset_cfg["evaluator"]
+
+    # Handle combined datasets - need to evaluate subsets separately
+    if evaluator_name == "combined":
+        return _evaluate_combined(model, tokenizer, items, prompt_cfg, eval_cfg, dataset_cfg)
+
+    # Route to logit-based or generation-based evaluation
+    if evaluator_name in LOGIT_BASED_EVALUATORS:
+        print(f"  Using logit-based evaluation for {evaluator_name}")
+        return evaluate_multiple_choice_logits(model, tokenizer, items, prompt_cfg, eval_cfg)
+    else:
+        print(f"  Using generation-based evaluation for {evaluator_name}")
+        return generate_predictions(model, tokenizer, items, prompt_cfg, eval_cfg)
+
+
+def _evaluate_combined(model, tokenizer, items: list[dict], prompt_cfg: dict, eval_cfg: dict,
+                       dataset_cfg: dict) -> tuple[list[dict], dict]:
+    """Evaluate combined datasets by routing each subset to appropriate method."""
+    import time
+    import torch
+
+    # Split items by source dataset
+    items_by_source = {}
+    for item in items:
+        source = item.get("source_dataset", "unknown")
+        items_by_source.setdefault(source, []).append(item)
+
+    print(f"  Combined evaluation:")
+    for source, source_items in items_by_source.items():
+        print(f"    {source}: {len(source_items)} items")
+
+    # Evaluate each subset with appropriate method
+    all_preds = []
+    total_time = 0.0
+    max_vram = 0.0
+
+    for source, source_items in sorted(items_by_source.items()):
+        print(f"\n  Evaluating {source}...")
+
+        # Determine evaluation method for this source
+        # MMLU uses logit-based, GSM8K uses generation
+        if source == "mmlu":
+            preds, metrics = evaluate_multiple_choice_logits(model, tokenizer, source_items,
+                                                            prompt_cfg, eval_cfg)
+        else:  # gsm8k and others
+            preds, metrics = generate_predictions(model, tokenizer, source_items,
+                                                 prompt_cfg, eval_cfg)
+
+        all_preds.extend(preds)
+        total_time += metrics.get("time_eval", 0)
+        max_vram = max(max_vram, metrics.get("vram_eval") or 0)
+
+    combined_metrics = {
+        "time_eval": round(total_time, 2),
+        "vram_eval": round(max_vram, 2) if max_vram > 0 else None,
+    }
+
+    return all_preds, combined_metrics
 
 
 # ------------------------------------------------------------------ dataset adapters
@@ -369,6 +482,7 @@ def _get_prompt_for_item(item: dict, prompt_cfg: dict) -> dict:
 
 
 def render_prompt(tokenizer, item: dict, prompt_cfg: dict) -> str:
+    """Render prompt for evaluation (user message only, with generation_prompt=True)."""
     cfg = _get_prompt_for_item(item, prompt_cfg)
     text = cfg["template"].replace("{question}", item["question"]).strip()
     if getattr(tokenizer, "chat_template", None):
@@ -380,13 +494,159 @@ def render_prompt(tokenizer, item: dict, prompt_cfg: dict) -> str:
 
 
 def render_target(item: dict, prompt_cfg: dict) -> str:
+    """Render target completion (assistant response text only, no template markers)."""
     cfg = _get_prompt_for_item(item, prompt_cfg)
     return item["target_short"] if cfg.get("target", "full") == "short" else item["target"]
 
 
-def generate_predictions(model, tokenizer, items: list[dict], prompt_cfg: dict, eval_cfg: dict) -> list[dict]:
-    """Batched generation. Returns [{item_id, completion, gold, completion_tokens}, ...]."""
+def render_training_text(tokenizer, item: dict, prompt_cfg: dict) -> str:
+    """Render full chat-formatted text for training (user + assistant messages).
+
+    This is the format mentor's notebook uses: single "text" field with full conversation.
+    Used with DataCollatorForCompletionOnlyLM to mask loss on prompt tokens.
+    """
+    cfg = _get_prompt_for_item(item, prompt_cfg)
+    question_text = cfg["template"].replace("{question}", item["question"]).strip()
+    answer_text = render_target(item, prompt_cfg)
+
+    if getattr(tokenizer, "chat_template", None):
+        messages = []
+        if cfg.get("system"):
+            messages.append({"role": "system", "content": cfg["system"]})
+        messages.append({"role": "user", "content": question_text})
+        messages.append({"role": "assistant", "content": answer_text})
+        return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+    else:
+        # Fallback for models without chat template
+        return f"{question_text}\n{answer_text}"
+
+
+def evaluate_multiple_choice_logits(model, tokenizer, items: list[dict], prompt_cfg: dict, eval_cfg: dict) -> tuple[list[dict], dict]:
+    """Logit-based multiple choice evaluation (matches mentor's MMLU approach).
+
+    Instead of generating text, extracts logits for A/B/C/D tokens and picks the highest.
+    Much faster and more deterministic than generation-based evaluation.
+
+    Returns (predictions, eval_metrics).
+    """
     import torch
+    import time
+
+    CHOICES = ['A', 'B', 'C', 'D']
+
+    # Render prompts - for multiple choice, we add "Answer:" at the end
+    prompts = []
+    for it in items:
+        cfg = _get_prompt_for_item(it, prompt_cfg)
+        text = cfg["template"].replace("{question}", it["question"]).strip()
+        if getattr(tokenizer, "chat_template", None):
+            messages = [{"role": "user", "content": text}]
+            if cfg.get("system"):
+                messages.insert(0, {"role": "system", "content": cfg["system"]})
+            prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        else:
+            prompt = text + "\n"
+        # Add "Answer:" suffix for multiple choice prompts
+        prompt = prompt + "Answer:"
+        prompts.append(prompt)
+
+    model.eval()
+    device = next(model.parameters()).device
+
+    # Get token IDs for A, B, C, D (with space prefix to match typical tokenization)
+    choice_ids = [tokenizer.encode(' ' + c, add_special_tokens=False)[-1] for c in CHOICES]
+    print(f"    Multiple choice evaluation (logit-based)")
+    print(f"    Choice token IDs: {list(zip(CHOICES, choice_ids))}")
+
+    # Reset VRAM stats and start timer
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+    t0 = time.time()
+
+    prev_side, tokenizer.padding_side = tokenizer.padding_side, "right"
+    preds, bs = [], eval_cfg["batch_size"]
+
+    try:
+        for i in range(0, len(items), bs):
+            batch_prompts = prompts[i:i + bs]
+            batch_items = items[i:i + bs]
+
+            # Tokenize
+            enc = tokenizer(batch_prompts, return_tensors="pt", padding=True,
+                          truncation=True, max_length=1024).to(device)
+
+            # Logits diagnostics on first batch
+            if i == 0:
+                with torch.no_grad():
+                    diag_out = model(**{k: v[:1] for k, v in enc.items()})
+                    nan_count = torch.isnan(diag_out.logits).sum().item()
+                    logit_min = diag_out.logits.min().item()
+                    logit_max = diag_out.logits.max().item()
+                    print(f"    Logits diagnostics (first batch):")
+                    print(f"      NaNs in logits: {nan_count}")
+                    print(f"      Logits min/max: {logit_min:.2f} / {logit_max:.2f}")
+
+            # Forward pass
+            with torch.no_grad():
+                out = model(**enc)
+
+            # Get last token position for each sequence (accounting for padding)
+            attention_mask = enc['attention_mask']
+            last_token_pos = attention_mask.sum(dim=1) - 1  # [batch_size]
+
+            # Extract logits at last position for each sequence
+            batch_indices = torch.arange(out.logits.shape[0], device=device)
+            last_logits = out.logits[batch_indices, last_token_pos]  # [batch_size, vocab_size]
+
+            # Get logits for A, B, C, D tokens only
+            choice_logits = last_logits[:, choice_ids]  # [batch_size, 4]
+
+            # Argmax to get predictions
+            pred_indices = choice_logits.argmax(dim=-1).cpu().tolist()
+            pred_letters = [CHOICES[idx] for idx in pred_indices]
+
+            # Build prediction records
+            for it, pred_letter in zip(batch_items, pred_letters):
+                pred = {
+                    "item_id": it["item_id"],
+                    "completion": pred_letter,  # Store just the letter
+                    "gold": it["gold"],
+                    "completion_tokens": 1,  # Only "predicted" 1 token (the letter)
+                }
+                if "source_dataset" in it:
+                    pred["source_dataset"] = it["source_dataset"]
+                preds.append(pred)
+
+            if (i + bs) % 100 == 0 or (i + bs) >= len(items):
+                print(f"    Progress: {min(i + bs, len(items))}/{len(items)}")
+
+    finally:
+        tokenizer.padding_side = prev_side
+
+    # Capture eval metrics
+    time_eval = time.time() - t0
+    vram_eval = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else None
+
+    eval_metrics = {
+        "time_eval": round(time_eval, 2),
+        "vram_eval": round(vram_eval, 2) if vram_eval is not None else None,
+    }
+
+    print(f"  Evaluation time: {time_eval:.1f}s")
+    if vram_eval is not None:
+        print(f"  Peak VRAM (eval): {vram_eval:.2f} GB")
+
+    return preds, eval_metrics
+
+
+def generate_predictions(model, tokenizer, items: list[dict], prompt_cfg: dict, eval_cfg: dict) -> tuple[list[dict], dict]:
+    """Batched generation. Returns (predictions, eval_metrics).
+
+    predictions: [{item_id, completion, gold, completion_tokens}, ...]
+    eval_metrics: {time_eval, vram_eval}
+    """
+    import torch
+    import time
 
     prompts = [render_prompt(tokenizer, it, prompt_cfg) for it in items]
     model.eval()
@@ -399,12 +659,30 @@ def generate_predictions(model, tokenizer, items: list[dict], prompt_cfg: dict, 
         gen_kwargs["temperature"] = temp
     add_special = getattr(tokenizer, "chat_template", None) is None
 
+    # Reset VRAM stats and start timer
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+    t0 = time.time()
+
     prev_side, tokenizer.padding_side = tokenizer.padding_side, "left"
     preds, bs = [], eval_cfg["batch_size"]
     try:
         for i in range(0, len(items), bs):
             batch = tokenizer(prompts[i:i + bs], return_tensors="pt", padding=True,
                               add_special_tokens=add_special).to(device)
+
+            # Logits diagnostics on first batch (match mentor's notebook)
+            if i == 0:
+                with torch.no_grad():
+                    # Forward pass only for diagnostics
+                    diag_out = model(**{k: v[:1] for k, v in batch.items()})  # First example only
+                    nan_count = torch.isnan(diag_out.logits).sum().item()
+                    logit_min = diag_out.logits.min().item()
+                    logit_max = diag_out.logits.max().item()
+                    print(f"    Logits diagnostics (first batch):")
+                    print(f"      NaNs in logits: {nan_count}")
+                    print(f"      Logits min/max: {logit_min:.2f} / {logit_max:.2f}")
+
             with torch.no_grad():
                 out = model.generate(**batch, **gen_kwargs)
             gen = out[:, batch["input_ids"].shape[1]:]
@@ -418,4 +696,18 @@ def generate_predictions(model, tokenizer, items: list[dict], prompt_cfg: dict, 
                 preds.append(pred)
     finally:
         tokenizer.padding_side = prev_side
-    return preds
+
+    # Capture eval metrics
+    time_eval = time.time() - t0
+    vram_eval = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else None
+
+    eval_metrics = {
+        "time_eval": round(time_eval, 2),
+        "vram_eval": round(vram_eval, 2) if vram_eval is not None else None,
+    }
+
+    print(f"  Evaluation time: {time_eval:.1f}s")
+    if vram_eval is not None:
+        print(f"  Peak VRAM (eval): {vram_eval:.2f} GB")
+
+    return preds, eval_metrics

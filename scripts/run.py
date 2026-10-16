@@ -59,8 +59,16 @@ def execute(job: Job, runs_dir: Path, gpu_info: dict) -> None:
 
         model, info = train.train(cfg, job.seed, job.location["resolved_layers"], model, tok,
                                   train_items, evaluator, run.checkpoint_dir)
-        preds = evaluate.generate_predictions(model, tok, eval_items, cfg["prompt"], cfg["evaluation"])
-        run.finish(evaluator.per_item(preds), {"eval": evaluator.evaluate(preds), "train": info})
+
+        # Use the new evaluate_predictions dispatcher that routes to logit-based or generation-based
+        preds, eval_metrics = evaluate.evaluate_predictions(model, tok, eval_items, cfg["prompt"],
+                                                           cfg["evaluation"], cfg["dataset"])
+
+        # Merge eval metrics (time_eval, vram_eval) with evaluation results
+        eval_results = evaluator.evaluate(preds)
+        eval_results.update(eval_metrics)
+
+        run.finish(evaluator.per_item(preds), {"eval": eval_results, "train": info})
         runs.register_run(cfg["name"], job.seed, job.run_id)
     except BaseException as e:
         run.fail(f"{type(e).__name__}: {e}")

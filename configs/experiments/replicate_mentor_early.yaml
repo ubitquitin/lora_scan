@@ -1,0 +1,52 @@
+# Exact replication of mentor's early layer experiment
+# Trains on MMLU + GSM8K combined with early layers (0-7)
+# Goal: Match mentor's results exactly
+#
+# Mentor's results for early config:
+# - train_loss: 0.6168
+# - mmlu_accuracy: 0.4408, mmlu_correct: 201/456
+# - gsm8k_accuracy: 0.25, gsm8k_correct: 50/200
+# - trainable_params: 1466368
+# - vram_train: 10.70 GB, time_train: 274.87s
+# - vram_eval: 0.83 GB, time_eval: 273.49s
+
+name: replicate_mentor_early
+method: sft
+model: qwen25-0.5b
+dataset: mmlu_gsm8k_combined
+prompt: combined_mmlu_gsm8k
+
+lora:
+  rank: 8
+  alpha: 16
+  dropout: 0.05
+  location: early  # Layers 0-7 (matches mentor's 'early' config)
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+
+training:
+  learning_rate: 5.0e-5
+  num_train_epochs: 1
+  max_steps: null  # Use num_train_epochs instead
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 4  # Effective batch = 16
+  max_length: 1024
+  logging_steps: 25
+  save_strategy: "no"
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.05  # Match mentor's 5% warmup (WARMUP_RATIO = 0.05)
+  # Mentor-specific hyperparameters (explicit match to notebook)
+  optim: paged_adamw_8bit
+  packing: false
+  dataset_text_field: text
+  fp16: true
+
+data:
+  max_train_samples: null  # Use full combined training set
+  max_eval_samples: null
+
+evaluation:
+  max_new_tokens: 512
+  batch_size: 8
+  temperature: 0.0
+
+seeds: [42]

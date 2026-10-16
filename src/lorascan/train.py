@@ -4,7 +4,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from .evaluate import render_prompt, render_target
+from .evaluate import render_prompt, render_target, render_training_text, get_assistant_prefix
 
 
 def seed_everything(seed: int) -> None:
@@ -35,8 +35,9 @@ def verify_gpu() -> dict:
 
 
 def _dtype():
+    """Model loading dtype. Fixed to fp16 to match mentor (T4 native)."""
     import torch
-    return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    return torch.float16  # Mentor uses explicit fp16, not dynamic bf16 detection
 
 
 def load_model_and_tokenizer(model_cfg: dict):
@@ -63,9 +64,10 @@ def build_lora_config(lora_cfg: dict, model_cfg: dict, layers: list[int]):
     )
 
 
-def _precision_flags() -> dict:
-    import torch
-    return {"bf16": True} if torch.cuda.is_bf16_supported() else {"fp16": True}
+# Removed _precision_flags() - now using explicit fp16 from config to match mentor
+# def _precision_flags() -> dict:
+#     import torch
+#     return {"bf16": True} if torch.cuda.is_bf16_supported() else {"fp16": True}
 
 
 class ProgressCallback:
@@ -146,7 +148,7 @@ class ProgressCallback:
         self.callback = _Callback(self)
 
 
-def _info(trainer, output_dir: Path) -> tuple:
+def _info(trainer, output_dir: Path, time_train: float, vram_train: float | None) -> tuple:
     import math
 
     model = trainer.model
@@ -162,18 +164,33 @@ def _info(trainer, output_dir: Path) -> tuple:
         "trainable_params": sum(p.numel() for p in model.parameters() if p.requires_grad),
         "final_train_loss": final_loss,
         "steps": trainer.state.global_step,
+        "time_train": round(time_train, 2),
+        "vram_train": round(vram_train, 2) if vram_train is not None else None,
     }
     return model, info
 
 
 def train_sft(*, model, tokenizer, dataset, prompt, lora_config, training_config, seed, output_dir):
+    import torch
     from datasets import Dataset
-    from trl import SFTConfig, SFTTrainer
+    from trl import SFTConfig, SFTTrainer, DataCollatorForCompletionOnlyLM
     from transformers import EarlyStoppingCallback
 
-    eos = tokenizer.eos_token or ""
-    rows = [{"prompt": render_prompt(tokenizer, it, prompt),
-             "completion": render_target(it, prompt) + eos} for it in dataset]
+    # Prepare dataset in mentor's format: single "text" field with full chat template
+    rows = [{"text": render_training_text(tokenizer, it, prompt)} for it in dataset]
+
+    # Create response template for loss masking (mentor's approach)
+    # This masks loss on prompt tokens, only training on completion
+    assistant_prefix = get_assistant_prefix(tokenizer)
+    response_template_ids = tokenizer.encode(assistant_prefix, add_special_tokens=False)
+
+    print(f"  Response template: {repr(assistant_prefix)}")
+    print(f"  Response template IDs: {response_template_ids}")
+
+    collator = DataCollatorForCompletionOnlyLM(
+        response_template=response_template_ids,
+        tokenizer=tokenizer,
+    )
 
     # Create progress callback - max_steps will be set by trainer if using num_train_epochs
     # For now, estimate it or wait for trainer to set it
@@ -216,17 +233,40 @@ def train_sft(*, model, tokenizer, dataset, prompt, lora_config, training_config
     else:
         training_config["save_strategy"] = "no"
 
+    # Match mentor exactly: use explicit fp16 from config, not dynamic detection
     args = SFTConfig(output_dir=str(output_dir), seed=seed, report_to="none",
-                     **_precision_flags(), **training_config)
-    trainer = SFTTrainer(model=model, args=args, train_dataset=Dataset.from_list(rows),
-                         eval_dataset=Dataset.from_list(rows[:min(100, len(rows))]) if early_stopping_enabled else None,
-                         processing_class=tokenizer, peft_config=lora_config,
-                         callbacks=callbacks)
+                     **training_config)
+    trainer = SFTTrainer(
+        model=model,
+        args=args,
+        train_dataset=Dataset.from_list(rows),
+        eval_dataset=Dataset.from_list(rows[:min(100, len(rows))]) if early_stopping_enabled else None,
+        processing_class=tokenizer,
+        peft_config=lora_config,
+        data_collator=collator,  # ← Loss masking: only train on completion tokens
+        callbacks=callbacks,
+    )
+
+    # Reset VRAM stats and start timer
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+    t0 = time.time()
+
     trainer.train()
-    return _info(trainer, Path(output_dir))
+
+    # Capture training metrics
+    time_train = time.time() - t0
+    vram_train = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else None
+
+    print(f"  Training time: {time_train:.1f}s")
+    if vram_train is not None:
+        print(f"  Peak VRAM (train): {vram_train:.2f} GB")
+
+    return _info(trainer, Path(output_dir), time_train, vram_train)
 
 
 def train_grpo(*, model, tokenizer, dataset, prompt, lora_config, training_config, seed, output_dir, evaluator):
+    import torch
     from datasets import Dataset
     from trl import GRPOConfig, GRPOTrainer
 
@@ -240,13 +280,29 @@ def train_grpo(*, model, tokenizer, dataset, prompt, lora_config, training_confi
     max_steps = training_config.get("max_steps", 500)
     progress = ProgressCallback(max_steps)
 
+    # Use explicit precision from config (mentor doesn't use GRPO, but keep consistent)
     args = GRPOConfig(output_dir=str(output_dir), seed=seed, report_to="none", save_strategy="no",
-                      **_precision_flags(), **training_config)
+                      **training_config)
     trainer = GRPOTrainer(model=model, reward_funcs=[correctness_reward], args=args,
                           train_dataset=Dataset.from_list(rows), processing_class=tokenizer,
                           peft_config=lora_config, callbacks=[progress.callback])
+
+    # Reset VRAM stats and start timer
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+    t0 = time.time()
+
     trainer.train()
-    return _info(trainer, Path(output_dir))
+
+    # Capture training metrics
+    time_train = time.time() - t0
+    vram_train = torch.cuda.max_memory_allocated() / 1e9 if torch.cuda.is_available() else None
+
+    print(f"  Training time: {time_train:.1f}s")
+    if vram_train is not None:
+        print(f"  Peak VRAM (train): {vram_train:.2f} GB")
+
+    return _info(trainer, Path(output_dir), time_train, vram_train)
 
 
 def train(config: dict, seed: int, layers: list[int], model, tokenizer, dataset, evaluator, output_dir):

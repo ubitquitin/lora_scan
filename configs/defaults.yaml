@@ -37,6 +37,11 @@ training:
     logging_steps: 10
     lr_scheduler_type: cosine
     warmup_steps: 15  # 0.03 * 500 = 15 (equivalent to warmup_ratio=0.03)
+    # Mentor-specific hyperparameters (matches notebook exactly)
+    optim: paged_adamw_8bit       # Memory-efficient 8-bit optimizer
+    packing: false                # Disable packing - breaks loss masking
+    dataset_text_field: text      # Field name for training data
+    fp16: true                    # Use fp16 precision (overrides auto-detection)
   grpo:
     learning_rate: 1.0e-5
     max_steps: 500
@@ -45,3 +50,4 @@ training:
     num_generations: 4               # 16/4 = 4 prompts per batch
     max_completion_length: 256
     logging_steps: 10
+    fp16: true                       # Consistent with SFT
