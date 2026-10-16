@@ -18,7 +18,7 @@ lora:
   rank: 8
   alpha: 16
   dropout: 0.05
-  location: [all, random, early, late]  # Sweep across all layer configurations
+  location: all  # Base value; will be swept
   target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
 
 training:
@@ -50,3 +50,6 @@ evaluation:
   temperature: 0.0
 
 seeds: [42]
+
+sweep:
+  lora.location: [all, random, early, late]
