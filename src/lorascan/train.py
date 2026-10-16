@@ -35,9 +35,9 @@ def verify_gpu() -> dict:
 
 
 def _dtype():
-    """Model loading dtype. Fixed to fp16 to match mentor (T4 native)."""
+    """Model loading dtype. Fixed to bf16 to match rank1 pilot."""
     import torch
-    return torch.float16  # Mentor uses explicit fp16, not dynamic bf16 detection
+    return torch.bfloat16  # Mentor's rank1 pilot uses bf16
 
 
 def load_model_and_tokenizer(model_cfg: dict):

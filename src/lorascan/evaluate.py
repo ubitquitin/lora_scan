@@ -293,11 +293,23 @@ def _evaluate_combined(model, tokenizer, items: list[dict], prompt_cfg: dict, ev
 # ------------------------------------------------------------------ dataset adapters
 # One adapter per evaluator kind: raw HF example -> {question, gold, target, target_short}
 def _fmt_gsm8k(ex: dict, cfg: dict) -> dict:
+    """Format GSM8K example to match mentor's rank1 SFT setup.
+
+    Mentor's format: <cleaned_cot>\n\n\\boxed{N}
+    - Removes calculator markup: <<expr=value>>
+    - Removes #### N suffix
+    - Adds \\boxed{} wrapper
+    - EOS token added automatically by tokenizer during training
+
+    Reference: SPAR-Fall-26-Selective-Fine-Tuning/rank1/experiments/extract_icv_sft_morris2026.py
+    """
     reasoning, _, final = ex["answer"].partition("####")
+    # Remove calculator markup
     reasoning = re.sub(r"<<.*?>>", "", reasoning).strip()
     gold = _norm_number(final.strip()) or final.strip()
+    # Mentor's target format: <cot>\n\n\boxed{N}
     return {"question": ex["question"], "gold": gold,
-            "target": f"{reasoning}\nThe final answer is {gold}.", "target_short": gold}
+            "target": f"{reasoning}\n\n\\boxed{{{gold}}}", "target_short": gold}
 
 
 def _fmt_mc(ex: dict, cfg: dict) -> dict:

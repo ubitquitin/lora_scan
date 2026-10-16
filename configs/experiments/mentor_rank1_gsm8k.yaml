@@ -1,0 +1,55 @@
+# Exact replication of mentor's rank-1 GSM8K SFT pilot
+# Reference: SPAR-Fall-26-Selective-Fine-Tuning/rank1/results/pilot_2026-08-01/
+#
+# Pilot results (Qwen2.5-1.5B-Instruct, 4-bit):
+# - Base: 0.640 accuracy
+# - SFT: 0.420 accuracy (greedy pass@1)
+# - Response length: collapsed from 288 to 77 tokens
+#
+# Target: Match mentor's SFT accuracy of 0.420
+
+name: mentor_rank1_gsm8k
+method: sft
+model: qwen25-1.5b  # Qwen2.5-1.5B-Instruct
+dataset: gsm8k
+prompt: chat_gsm8k
+
+lora:
+  rank: 1           # Rank-1 (mentor's ICV setup)
+  alpha: 1          # Alpha = 1 (so scaling = 1)
+  dropout: 0.0      # No dropout
+  location: all     # All 28 layers
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+
+training:
+  learning_rate: 1.0e-4     # SFT lr from pilot
+  num_train_epochs: 2       # 2 epochs = 64 optimizer steps
+  max_steps: null
+  per_device_train_batch_size: 1    # Single sequence forwards
+  gradient_accumulation_steps: 64   # 64 prompts per optimizer step
+  max_length: 1536          # Truncation length for prompt+target
+  logging_steps: 10
+  save_strategy: "no"
+  lr_scheduler_type: linear
+  warmup_steps: 0           # No warmup in mentor's setup
+  # Optimizer
+  optim: adamw_torch        # Standard AdamW
+  weight_decay: 0.01
+  max_grad_norm: 1.0        # Gradient clipping
+  # Precision
+  bf16: true                # Mentor uses bf16
+  fp16: false
+  # SFT-specific
+  packing: false
+  dataset_text_field: text
+
+data:
+  max_train_samples: 512    # 512 GSM8K training problems
+  max_eval_samples: 150     # 150 held-out test problems
+
+evaluation:
+  max_new_tokens: 512       # Pilot uses 512 (not 1024)
+  batch_size: 4
+  temperature: 0.0          # Greedy pass@1
+
+seeds: [42]

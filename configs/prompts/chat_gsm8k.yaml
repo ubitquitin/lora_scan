@@ -1,8 +1,10 @@
 name: chat_gsm8k
-# Chat format with system prompt for GSM8K math problems
-# Matches mentor's notebook setup
+# Matches mentor's rank1 SFT setup exactly
+# Reference: SPAR-Fall-26-Selective-Fine-Tuning/rank1/icv_lora/data.py
 system: |
-  You are a math tutor. Solve the problem step by step, then give the final numeric answer on a new line in the format: #### <number>
+  You are a helpful assistant.
 template: |
   {question}
+
+  Please reason step by step, and put your final answer within \boxed{}.
 target: full
