@@ -176,8 +176,14 @@ def _info(trainer, output_dir: Path, time_train: float, vram_train: float | None
 def train_sft(*, model, tokenizer, dataset, prompt, lora_config, training_config, seed, output_dir):
     import torch
     from datasets import Dataset
-    from trl import SFTConfig, SFTTrainer, DataCollatorForCompletionOnlyLM
+    from trl import SFTConfig, SFTTrainer
     from transformers import EarlyStoppingCallback
+
+    # DataCollatorForCompletionOnlyLM moved from trl to transformers in newer versions
+    try:
+        from transformers import DataCollatorForCompletionOnlyLM
+    except ImportError:
+        from trl import DataCollatorForCompletionOnlyLM
 
     # Prepare dataset in mentor's format: single "text" field with full chat template
     rows = [{"text": render_training_text(tokenizer, it, prompt)} for it in dataset]
