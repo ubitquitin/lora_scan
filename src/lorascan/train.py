@@ -258,8 +258,30 @@ def train_sft(*, model, tokenizer, dataset, prompt, lora_config, training_config
     if use_new_approach:
         training_config = {**training_config, "completion_only_loss": True}
 
+    # Handle warmup_ratio compatibility (some TRL versions don't accept it)
+    # Convert warmup_ratio to warmup_steps if needed
+    training_config_copy = {**training_config}
+    if "warmup_ratio" in training_config_copy and "warmup_steps" not in training_config_copy:
+        # Calculate warmup_steps from warmup_ratio
+        warmup_ratio = training_config_copy.pop("warmup_ratio")
+
+        # Estimate total steps
+        if training_config_copy.get("max_steps"):
+            total_steps = training_config_copy["max_steps"]
+        elif "num_train_epochs" in training_config_copy:
+            batch_size = training_config_copy.get("per_device_train_batch_size", 4)
+            grad_accum = training_config_copy.get("gradient_accumulation_steps", 1)
+            epochs = training_config_copy["num_train_epochs"]
+            total_steps = int(len(rows) * epochs / (batch_size * grad_accum))
+        else:
+            total_steps = 500  # fallback
+
+        warmup_steps = int(total_steps * warmup_ratio)
+        training_config_copy["warmup_steps"] = warmup_steps
+        print(f"  Converted warmup_ratio {warmup_ratio} -> warmup_steps {warmup_steps} (total: {total_steps})")
+
     args = SFTConfig(output_dir=str(output_dir), seed=seed, report_to="none",
-                     **training_config)
+                     **training_config_copy)
 
     # Build trainer (with or without data_collator depending on TRL version)
     trainer_kwargs = {
