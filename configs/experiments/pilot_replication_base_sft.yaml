@@ -24,11 +24,11 @@ lora:
   location: all     # All 28 layers
   target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
 
-# Data splits - EXACT pilot
+# Data splits - EXACT pilot (first N, NO shuffling!)
 data:
-  max_train_samples: 512    # Train on 512 problems
-  max_eval_samples: 150     # Eval on 150 held-out problems
-  train_test_split: 0.8     # Standard split (though GSM8K has predefined split)
+  max_train_samples: 512    # Train on FIRST 512 problems (not shuffled)
+  max_eval_samples: 150     # Eval on FIRST 150 problems (not shuffled)
+  subsample_seed: null      # NO SHUFFLING - take first N as-is (rank1 pilot behavior)
 
 # Evaluation settings - CRITICAL for proper comparison
 evaluation:

@@ -469,8 +469,15 @@ def load_items(dataset_cfg: dict, data_cfg: dict, split: str, limit: int | None 
     original_size = len(ds)
     ds = ds.add_column("_idx", list(range(len(ds))))
     if limit and limit < len(ds):
-        ds = ds.shuffle(seed=data_cfg.get("subsample_seed", 0)).select(range(limit))
-        print(f"  {dataset_cfg['name']} {split}: Limited from {original_size} to {len(ds)} samples (limit={limit})", flush=True)
+        subsample_seed = data_cfg.get("subsample_seed")
+        if subsample_seed is not None:
+            # Shuffle with seed, then take first N
+            ds = ds.shuffle(seed=subsample_seed).select(range(limit))
+            print(f"  {dataset_cfg['name']} {split}: Shuffled (seed={subsample_seed}), limited from {original_size} to {len(ds)} samples", flush=True)
+        else:
+            # NO shuffling - take first N as-is (rank1 pilot behavior)
+            ds = ds.select(range(limit))
+            print(f"  {dataset_cfg['name']} {split}: No shuffle, limited from {original_size} to {len(ds)} samples (first N only)", flush=True)
     fmt = FORMATTERS[dataset_cfg["evaluator"]]
     items = []
     for ex in ds:
