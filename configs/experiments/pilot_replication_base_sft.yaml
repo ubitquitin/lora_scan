@@ -1,0 +1,87 @@
+# EXACT replication of rank1 pilot: base + SFT comparison
+# Reference: SPAR-Fall-26-Selective-Fine-Tuning/rank1/results/pilot_2026-08-01/
+#
+# Expected results (on 150 test problems):
+# - Base (method=none): 0.640 accuracy, 288 mean tokens
+# - SFT (method=sft): 0.420 accuracy, 77 mean tokens (collapse!)
+#
+# This config SWEEPS over method=[none, sft] to run both experiments
+
+name: pilot_base_sft
+method: none  # Base value; will be swept to [none, sft]
+
+# Model and data
+model: qwen25-1.5b  # Qwen/Qwen2.5-1.5B-Instruct
+dataset: gsm8k
+prompt: chat_gsm8k  # Standard chat format
+load_in_4bit: true  # Pilot used NF4 4-bit quantization
+
+# LoRA configuration - EXACT pilot settings
+lora:
+  rank: 1           # Rank-1 ICV
+  alpha: 1          # Alpha = rank (no scaling)
+  dropout: 0.0      # No dropout
+  location: all     # All 28 layers
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+
+# Data splits - EXACT pilot
+data:
+  max_train_samples: 512    # Train on 512 problems
+  max_eval_samples: 150     # Eval on 150 held-out problems
+  train_test_split: 0.8     # Standard split (though GSM8K has predefined split)
+
+# Evaluation settings - CRITICAL for proper comparison
+evaluation:
+  max_new_tokens: 512       # Pilot uses 512
+  batch_size: 8             # Generation batch size
+  temperature: 0.0          # Greedy decoding (pass@1)
+  top_p: 0.95
+
+# Training configuration (used only when method=sft)
+training:
+  learning_rate: 1.0e-4         # SFT lr from pilot
+  num_train_epochs: 2           # 2 epochs
+  max_steps: -1                 # Let epochs control (should give 64 steps)
+
+  # Batch size: pilot uses batch_size=16 with 512 samples
+  # 512 samples / 16 batch / 1 accum = 32 steps/epoch * 2 epochs = 64 optimizer steps
+  per_device_train_batch_size: 16
+  gradient_accumulation_steps: 1  # CRITICAL: must be 1, not 64!
+
+  # Sequence length
+  max_length: 1536              # Max seq length (prompt + completion)
+
+  # Optimization
+  optim: adamw_torch            # Standard AdamW (not 8bit)
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  warmup_steps: 0               # No warmup
+  lr_scheduler_type: linear
+
+  # Precision
+  bf16: true                    # Pilot uses bf16
+  fp16: false
+
+  # SFT-specific
+  dataset_text_field: text
+  packing: false
+
+  # Logging
+  logging_steps: 8              # Log every 8 steps
+  save_strategy: "no"           # Don't save checkpoints during training
+  save_total_limit: 0
+
+# Seeds
+seeds: [42]  # Single seed replication
+
+# SWEEP: Run both base (method: none) and SFT (method: sft)
+sweep:
+  method: [none, sft]
+
+# This will generate two experiments:
+# 1. pilot_base_sft_none: Base inference, 0 params trained
+# 2. pilot_base_sft_sft: SFT training, 1.15M params trained
+#
+# Expected results on 150 test problems:
+# - Base: acc=0.640, tokens=288
+# - SFT:  acc=0.420, tokens=77  (COLLAPSE!)
