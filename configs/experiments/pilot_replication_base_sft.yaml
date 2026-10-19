@@ -19,7 +19,7 @@ load_in_4bit: true  # Pilot used NF4 4-bit quantization
 # LoRA configuration - EXACT pilot settings
 lora:
   rank: 1           # Rank-1 ICV
-  alpha: 1          # Alpha = rank (no scaling) - PILOT SETTING
+  alpha: 8          # Alpha = rank (no scaling) - PILOT SETTING
   dropout: 0.0      # No dropout
   location: all     # All 28 layers
   target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]

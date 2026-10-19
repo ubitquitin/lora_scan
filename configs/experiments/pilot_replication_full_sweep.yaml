@@ -1,0 +1,104 @@
+# FULL SWEEP: Base + SFT across models, seeds, alpha, and location
+# Based on rank1 pilot replication, expanded to explore hyperparameter space
+#
+# Base reference results (qwen25-1.5b, seed=42, alpha=8, location=all):
+# - Base (method=none): 0.640 accuracy, 288 mean tokens
+# - SFT (method=sft): 0.420 accuracy, 77 mean tokens (collapse!)
+#
+# This config sweeps 4 dimensions:
+# - Models: [qwen25-0.5b, qwen25-1.5b, qwen25-3b, gemma2-2b]
+# - Seeds: [42, 123, 456]
+# - LoRA alpha: [1, 8, 32, 128]
+# - LoRA location: [early, middle, late, all]
+# - Method: [none, sft] (base vs. trained)
+#
+# Total experiments: 4 models × 3 seeds × 4 alphas × 4 locations × 2 methods = 384 runs
+
+name: pilot_full_sweep
+method: none  # Base value; will be swept to [none, sft]
+
+# Model and data (model will be swept)
+model: qwen25-1.5b  # Base value; will be swept
+dataset: gsm8k
+prompt: chat_gsm8k  # Standard chat format
+load_in_4bit: true  # Pilot used NF4 4-bit quantization
+
+# LoRA configuration - values will be swept
+lora:
+  rank: 1           # Rank-1 ICV (fixed)
+  alpha: 8          # Base value; will be swept to [1, 8, 32, 128]
+  dropout: 0.0      # No dropout (fixed)
+  location: all     # Base value; will be swept to [early, middle, late, all]
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+
+# Data splits - EXACT pilot (first N, NO shuffling!)
+data:
+  max_train_samples: 512    # Train on FIRST 512 problems (not shuffled)
+  max_eval_samples: 150     # Eval on FIRST 150 problems (not shuffled)
+  subsample_seed: null      # NO SHUFFLING - take first N as-is (rank1 pilot behavior)
+
+# Evaluation settings - CRITICAL for proper comparison
+evaluation:
+  max_new_tokens: 512       # Pilot uses 512
+  batch_size: 8             # Generation batch size
+  temperature: 0.0          # Greedy decoding (pass@1)
+  top_p: 0.95
+
+# Training configuration (used only when method=sft)
+training:
+  learning_rate: 1.0e-4         # SFT lr from pilot
+  num_train_epochs: 2           # 2 epochs
+  max_steps: -1                 # Let epochs control (should give 64 steps)
+
+  # Batch size: pilot uses batch_size=16 with 512 samples
+  # 512 samples / 16 batch / 1 accum = 32 steps/epoch * 2 epochs = 64 optimizer steps
+  per_device_train_batch_size: 16
+  gradient_accumulation_steps: 1  # CRITICAL: must be 1, not 64!
+
+  # Sequence length
+  max_length: 1536              # Max seq length (prompt + completion)
+
+  # Optimization
+  optim: adamw_torch            # Standard AdamW (not 8bit)
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  warmup_steps: 0               # No warmup
+  lr_scheduler_type: linear
+
+  # Precision
+  bf16: true                    # Pilot uses bf16
+  fp16: false
+
+  # SFT-specific
+  dataset_text_field: text
+  packing: false
+
+  # Logging
+  logging_steps: 8              # Log every 8 steps
+  save_strategy: "no"           # Don't save checkpoints during training
+  save_total_limit: 0
+
+# Seeds - swept across 3 values
+seeds: [42, 123, 456]
+
+# SWEEP: All dimensions
+sweep:
+  model: [qwen25-0.5b, qwen25-1.5b, qwen25-3b, gemma2-2b]
+  method: [none, sft]
+  lora.alpha: [1, 8, 32, 128]
+  lora.location: [early, middle, late, all]
+
+# Expected dimensions:
+# - 4 models (0.5B, 1.5B, 3B Qwen + 2B Gemma)
+# - 3 seeds (42, 123, 456)
+# - 4 alpha values (1, 8, 32, 128) - tests α/r ratio effect
+# - 4 locations (early, middle, late, all) - tests layer placement
+# - 2 methods (none, sft) - base vs. trained
+#
+# Total: 4 × 3 × 4 × 4 × 2 = 384 experiments
+#
+# Key questions this sweep answers:
+# 1. Does collapse happen across all model sizes?
+# 2. Does alpha (scaling) prevent or worsen collapse?
+# 3. Does layer location affect collapse severity?
+# 4. How consistent are results across seeds?
