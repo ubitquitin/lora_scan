@@ -85,7 +85,7 @@ seeds: [42, 123, 456]
 sweep:
   model: [qwen25-0.5b, qwen25-1.5b, qwen25-3b, gemma2-2b]
   method: [none, sft]
-  lora.alpha: [1, 8, 32, 128]
+  lora.alpha: [1, 4, 6, 8, 32, 128]
   lora.location: [early, middle, late, all]
 
 # Expected dimensions:
