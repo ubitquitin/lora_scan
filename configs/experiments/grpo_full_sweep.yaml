@@ -1,0 +1,113 @@
+# FULL SWEEP: GRPO across models, seeds, alpha, and location
+# Based on pilot_replication_full_sweep.yaml but using GRPO instead of SFT
+#
+# This config mirrors the SFT sweep to enable direct comparison:
+# - Same models: [qwen25-1.5b, qwen25-3b, gemma2-2b]
+# - Same seeds: [42, 123, 456]
+# - Same LoRA alphas: [1, 4, 6, 8, 32, 128]
+# - Same locations: [early, middle, late, all]
+# - Method: GRPO with correctness reward
+#
+# Total experiments: 3 models × 3 seeds × 6 alphas × 4 locations = 216 runs
+#
+# Research questions:
+# 1. Does GRPO prevent the collapse observed in SFT?
+# 2. How does LoRA alpha affect GRPO performance?
+# 3. Does layer location matter for GRPO?
+# 4. How does GRPO scale across model sizes?
+
+name: grpo_full_sweep
+method: grpo  # Use GRPO instead of SFT
+
+# Model and data (model will be swept)
+model: qwen25-1.5b  # Base value; will be swept
+dataset: gsm8k
+prompt: chat_gsm8k  # Standard chat format
+load_in_4bit: true  # Use 4-bit quantization
+
+# LoRA configuration - values will be swept
+lora:
+  rank: 1           # Rank-1 ICV (fixed)
+  alpha: 8          # Base value; will be swept to [1, 4, 6, 8, 32, 128]
+  dropout: 0.0      # No dropout (fixed)
+  location: all     # Base value; will be swept to [early, middle, late, all]
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+
+# Data splits - match SFT sweep exactly
+data:
+  max_train_samples: 512    # Train on FIRST 512 problems
+  max_eval_samples: 150     # Eval on FIRST 150 problems
+  subsample_seed: null      # NO SHUFFLING - take first N as-is
+
+# Evaluation settings
+evaluation:
+  max_new_tokens: 512       # Match SFT sweep
+  batch_size: 8             # Generation batch size
+  temperature: 0.0          # Greedy decoding (pass@1)
+  top_p: 0.95
+
+# GRPO training configuration
+training:
+  learning_rate: 1.0e-5         # GRPO typically uses lower LR than SFT
+  max_steps: 500                # Same total steps as SFT for fair comparison
+
+  # Batch size: must be divisible by num_generations
+  # With batch_size=16 and num_generations=4, we process 4 prompts per batch
+  per_device_train_batch_size: 16
+  gradient_accumulation_steps: 1
+
+  # GRPO-specific parameters
+  num_generations: 4            # Generate 4 completions per prompt for policy gradient
+  max_completion_length: 512    # Match max_new_tokens
+
+  # Optimization
+  optim: adamw_torch            # Standard AdamW
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  warmup_steps: 50              # More warmup for GRPO stability
+  lr_scheduler_type: linear
+
+  # Precision
+  bf16: true                    # Use bf16
+  fp16: false
+
+  # Logging
+  logging_steps: 10             # Log every 10 steps
+  save_strategy: "no"           # Don't save checkpoints during training
+  save_total_limit: 0
+
+# Seeds - swept across 3 values
+seeds: [42, 123, 456]
+
+# SWEEP: All dimensions (same as SFT sweep for direct comparison)
+sweep:
+  model: [qwen25-1.5b, qwen25-3b, gemma2-2b]
+  lora.alpha: [1, 4, 6, 8, 32, 128]
+  lora.location: [early, middle, late, all]
+
+# Expected dimensions:
+# - 3 models (1.5B, 3B Qwen + 2B Gemma)
+# - 3 seeds (42, 123, 456)
+# - 6 alpha values (1, 4, 6, 8, 32, 128)
+# - 4 locations (early, middle, late, all)
+# - 1 method (grpo only)
+#
+# Total: 3 × 3 × 6 × 4 = 216 experiments
+#
+# Comparison with SFT sweep:
+# - SFT sweep also includes method=none (base), so it has 2× experiments
+# - We run grpo_full_sweep.yaml separately to compare against SFT results
+# - Can analyze: grpo vs sft vs none (base) across all hyperparameters
+#
+# Expected time on L4 GPU:
+# - ~15-20 min per run (GRPO is slower than SFT due to multiple generations)
+# - Total: 216 runs × 17.5 min = ~63 hours = 2.6 days
+#
+# Notes:
+# - GRPO may need hyperparameter tuning based on simple test results
+# - If simple test shows low accuracy, consider:
+#   - Increasing learning_rate to 5e-5
+#   - Increasing max_steps to 750
+#   - Adjusting warmup_steps
+# - Reward function is correctness-based (1.0 if correct, 0.0 if wrong)
+# - Each training step generates 4 completions per prompt for policy gradient

@@ -1,0 +1,72 @@
+# Simple GRPO test to verify it works before full sweep
+# Tests GRPO training on a small subset to validate the pipeline
+#
+# This is a minimal test to ensure:
+# 1. GRPO trainer initializes correctly
+# 2. Reward function works (correctness-based)
+# 3. Training completes without errors
+# 4. Results are reasonable (not collapsed)
+
+name: grpo_simple_test
+method: grpo  # Use GRPO training
+
+# Model and data - using smallest/fastest for quick test
+model: qwen25-1.5b  # Same as pilot for comparison
+dataset: gsm8k
+prompt: chat_gsm8k  # Standard chat format
+load_in_4bit: true  # Use 4-bit for memory efficiency
+
+# LoRA configuration - start with same as pilot
+lora:
+  rank: 1           # Rank-1 ICV
+  alpha: 8          # Same as pilot baseline
+  dropout: 0.0      # No dropout
+  location: all     # All layers
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+
+# Data splits - small subset for quick test
+data:
+  max_train_samples: 128    # Small training set for quick test
+  max_eval_samples: 50      # Small eval set
+  subsample_seed: null      # Take first N samples
+
+# Evaluation settings
+evaluation:
+  max_new_tokens: 512       # Match pilot
+  batch_size: 8             # Generation batch size
+  temperature: 0.0          # Greedy decoding
+  top_p: 0.95
+
+# GRPO training configuration
+training:
+  learning_rate: 1.0e-5         # GRPO uses lower LR than SFT
+  max_steps: 100                # Short run for testing
+
+  # Batch size: must be divisible by num_generations
+  per_device_train_batch_size: 16
+  gradient_accumulation_steps: 1
+
+  # GRPO-specific parameters
+  num_generations: 4            # Generate 4 completions per prompt
+  max_completion_length: 512    # Match max_new_tokens
+
+  # Optimization
+  optim: adamw_torch            # Standard AdamW
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  warmup_steps: 10              # Small warmup
+  lr_scheduler_type: linear
+
+  # Precision
+  bf16: true                    # Use bf16
+  fp16: false
+
+  # Logging
+  logging_steps: 10             # Log every 10 steps
+  save_strategy: "no"           # Don't save checkpoints
+
+# Single seed for initial test
+seeds: [42]
+
+# No sweep - just test GRPO with these exact settings
+# Once this works, we can create grpo_full_sweep.yaml
