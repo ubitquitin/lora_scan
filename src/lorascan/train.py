@@ -333,8 +333,11 @@ def train_grpo(*, model, tokenizer, dataset, prompt, lora_config, training_confi
     progress = ProgressCallback(max_steps)
 
     # Use explicit precision from config (mentor doesn't use GRPO, but keep consistent)
+    # Filter out params that are set explicitly to avoid duplicate keyword argument error
+    grpo_training_config = {k: v for k, v in training_config.items()
+                           if k not in ["output_dir", "seed", "report_to", "save_strategy"]}
     args = GRPOConfig(output_dir=str(output_dir), seed=seed, report_to="none", save_strategy="no",
-                      **training_config)
+                      **grpo_training_config)
     trainer = GRPOTrainer(model=model, reward_funcs=[correctness_reward], args=args,
                           train_dataset=Dataset.from_list(rows), processing_class=tokenizer,
                           peft_config=lora_config, callbacks=[progress.callback])
