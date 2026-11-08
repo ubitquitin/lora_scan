@@ -1,0 +1,75 @@
+# B0 SFT arm: Matched adapter for modules 7, 8, 9
+# Produces the collapse; adapter is compared against CoT direction and GRPO write
+#
+# Expected result (from doc):
+# - Base: 0.640 accuracy, 288 mean tokens
+# - After 64 steps: 0.420 accuracy, 77 mean tokens (collapse)
+#
+# CRITICAL: save_strategy must NOT be "no" - we need the adapter!
+
+name: b0_sft
+method: sft
+
+# Model and data - exact B0 spec
+model: qwen25-1.5b
+dataset: gsm8k
+prompt: chat_gsm8k
+load_in_4bit: true
+
+# LoRA configuration - B0 recipe
+lora:
+  rank: 1           # Rank-1 ICV
+  alpha: 1          # α=1 per B0 doc (NOT α=8!)
+  dropout: 0.0
+  location: all     # All layers
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+
+# Data splits - B0 spec
+data:
+  max_train_samples: 512    # B0: 512 training problems
+  max_eval_samples: 150     # B0: 150 held-out
+  subsample_seed: null      # Take first N, no shuffling
+
+# Evaluation settings
+evaluation:
+  max_new_tokens: 512
+  batch_size: 8
+  temperature: 0.0          # Greedy for pass@1
+  top_p: 0.95
+
+# Training configuration - MATCHED TO PILOT
+training:
+  learning_rate: 1.0e-4         # Pilot: 1e-4
+  num_train_epochs: 2           # 2 epochs = 64 steps
+  max_steps: -1                 # Let epochs control
+
+  per_device_train_batch_size: 16
+  gradient_accumulation_steps: 1
+
+  max_length: 1536
+
+  optim: adamw_torch
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  warmup_steps: 0
+  lr_scheduler_type: linear
+
+  bf16: true
+  fp16: false
+
+  dataset_text_field: text
+  packing: false
+
+  logging_steps: 8
+
+  # CRITICAL: Save the adapter!
+  save_strategy: "steps"
+  save_steps: 64            # Save at the end (step 64)
+  save_total_limit: 1       # Keep only final adapter
+  output_dir: "./checkpoints/b0_sft"  # Where to save
+
+# Start with one seed for validation
+seeds: [42]
+
+# Week-one gate: Reproduce 0.640 → 0.420 collapse
+# If this doesn't collapse at α=1, try α=8 and report the discrepancy

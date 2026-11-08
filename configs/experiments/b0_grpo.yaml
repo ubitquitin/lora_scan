@@ -1,0 +1,73 @@
+# B0 GRPO arm: Matched to b0_sft.yaml, different objective only
+# Used by modules 8 and 9 for comparing SFT vs. GRPO writes
+#
+# CRITICAL: save_strategy must NOT be "no" - we need the adapter!
+
+name: b0_grpo
+method: grpo
+
+# Model and data - exact match to b0_sft
+model: qwen25-1.5b
+dataset: gsm8k
+prompt: chat_gsm8k
+load_in_4bit: true
+
+# LoRA configuration - EXACT match to b0_sft
+lora:
+  rank: 1           # Rank-1 ICV
+  alpha: 1          # α=1 per B0 doc (NOT α=8!)
+  dropout: 0.0
+  location: all     # All layers
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+
+# Data splits - EXACT match to b0_sft
+data:
+  max_train_samples: 512    # B0: 512 training problems
+  max_eval_samples: 150     # B0: 150 held-out
+  subsample_seed: null      # Take first N, no shuffling
+
+# Evaluation settings - EXACT match to b0_sft
+evaluation:
+  max_new_tokens: 512
+  batch_size: 8
+  temperature: 0.0          # Greedy for pass@1
+  top_p: 0.95
+
+# GRPO training configuration - MATCHED TO PILOT
+training:
+  learning_rate: 5.0e-5         # Pilot: 5e-5
+  max_steps: 64                 # B0: exactly 64 optimizer steps (matched to SFT)
+
+  # Batch size matched to SFT
+  per_device_train_batch_size: 16
+  gradient_accumulation_steps: 1
+
+  # GRPO-specific parameters - MATCHED TO PILOT
+  num_generations: 4            # Pilot: 4 rollouts
+  max_completion_length: 512    # Pilot: 512 to match eval
+  temperature: 1.0              # Pilot: temp 1.0
+  beta: 0.0                     # Pilot: KL penalty = 0
+
+  # Optimization - matched to SFT where possible
+  optim: adamw_torch
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  warmup_steps: 0               # No warmup (matched to SFT)
+  lr_scheduler_type: linear
+
+  bf16: true
+  fp16: false
+
+  logging_steps: 8
+
+  # CRITICAL: Save the adapter!
+  save_strategy: "steps"
+  save_steps: 64            # Save at the end (step 64)
+  save_total_limit: 1       # Keep only final adapter
+  output_dir: "./checkpoints/b0_grpo"  # Where to save
+
+# Start with one seed for validation
+seeds: [42]
+
+# Note: B0 doc says GRPO may not show accuracy *gains* at 2B scale
+# We need the adapter's *write direction*, not necessarily improved accuracy
