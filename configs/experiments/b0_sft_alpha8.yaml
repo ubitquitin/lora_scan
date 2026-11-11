@@ -1,16 +1,12 @@
-# B0 Full Experiment: SFT + GRPO, alpha=8, 3 seeds
-# Single config to generate all 6 adapters needed for Module 8
+# B0 SFT arm: alpha=8, 3 seeds
+# Produces collapse adapters for Module 8 comparison
 #
 # Finding: B0 collapse reproduced at α=8 (not α=1 as pilot expected)
 # - Alpha=1: 69.3% accuracy, 262 tokens (minimal collapse)
 # - Alpha=8: 53.3% accuracy, 87 tokens (strong collapse signature)
-#
-# This config sweeps over both methods with 3 seeds each:
-#   b0_alpha8_sft:  sft_alpha8_seed42,  sft_alpha8_seed123,  sft_alpha8_seed456
-#   b0_alpha8_grpo: grpo_alpha8_seed42, grpo_alpha8_seed123, grpo_alpha8_seed456
 
-name: b0_alpha8
-method: sft  # will be swept to [sft, grpo]
+name: b0_sft_alpha8
+method: sft
 
 # Model and data - B0 spec
 model: qwen25-1.5b
@@ -39,11 +35,11 @@ evaluation:
   temperature: 0.0          # Greedy for pass@1
   top_p: 0.95
 
-# Training configuration - base for SFT, will be swept for GRPO
+# Training configuration
 training:
-  learning_rate: 1.0e-4         # SFT: 1e-4, GRPO: 5e-5 (swept)
-  num_train_epochs: 2           # SFT: 2 epochs = 64 steps
-  max_steps: -1                 # SFT: epochs control, GRPO: 64 (swept)
+  learning_rate: 1.0e-4         # Pilot: 1e-4
+  num_train_epochs: 2           # 2 epochs = 64 steps
+  max_steps: -1                 # Let epochs control
 
   per_device_train_batch_size: 16
   gradient_accumulation_steps: 1
@@ -64,37 +60,16 @@ training:
 
   logging_steps: 8
 
-  # Save the adapter - output_dir will be swept
+  # Save the adapter
   save_strategy: "steps"
   save_steps: 64            # Save at the end (step 64)
   save_total_limit: 1       # Keep only final adapter
-  output_dir: "./b0_adapters/sft_alpha8"  # will be swept
-
-  # GRPO-specific (ignored for SFT)
-  num_generations: 4
-  max_completion_length: 512
-  temperature: 1.0
-  beta: 0.0
+  output_dir: "./b0_adapters/sft_alpha8"
 
 # Run all 3 seeds
 seeds: [42, 123, 456]
 
-# Sweep over methods with appropriate settings
-sweep:
-  method: [sft, grpo]
-  training.learning_rate: [1.0e-4, 5.0e-5]     # SFT=1e-4, GRPO=5e-5
-  training.max_steps: [-1, 64]                 # SFT=epochs, GRPO=64
-  training.num_train_epochs: [2, 1]            # SFT=2, GRPO=1
-  training.output_dir:
-    - "./b0_adapters/sft_alpha8"
-    - "./b0_adapters/grpo_alpha8"
-
-# Expected outputs (6 adapters total):
+# Expected outputs (3 adapters):
 # ./b0_adapters/sft_alpha8/seed_42/checkpoint/
 # ./b0_adapters/sft_alpha8/seed_123/checkpoint/
 # ./b0_adapters/sft_alpha8/seed_456/checkpoint/
-# ./b0_adapters/grpo_alpha8/seed_42/checkpoint/
-# ./b0_adapters/grpo_alpha8/seed_123/checkpoint/
-# ./b0_adapters/grpo_alpha8/seed_456/checkpoint/
-#
-# After completion, upload entire b0_adapters/ folder to team drive

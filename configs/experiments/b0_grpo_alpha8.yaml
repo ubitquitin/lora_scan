@@ -1,0 +1,76 @@
+# B0 GRPO arm: alpha=8, 3 seeds
+# Produces GRPO adapters for Module 8 comparison against SFT
+#
+# Finding: B0 collapse reproduced at α=8 (not α=1 as pilot expected)
+# Using alpha=8 to match the SFT collapse signature
+
+name: b0_grpo_alpha8
+method: grpo
+
+# Model and data - exact match to SFT
+model: qwen25-1.5b
+dataset: gsm8k
+prompt: chat_gsm8k
+load_in_4bit: true
+
+# LoRA configuration - CORRECTED to alpha=8, matched to SFT
+lora:
+  rank: 1           # Rank-1 ICV
+  alpha: 8          # α=8 where collapse actually occurs
+  dropout: 0.0
+  location: all     # All layers
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+
+# Data splits - exact match to SFT
+data:
+  max_train_samples: 512    # B0: 512 training problems
+  max_eval_samples: 150     # B0: 150 held-out
+  subsample_seed: null      # Take first N, no shuffling
+
+# Evaluation settings - exact match to SFT
+evaluation:
+  max_new_tokens: 512
+  batch_size: 8
+  temperature: 0.0          # Greedy for pass@1
+  top_p: 0.95
+
+# GRPO training configuration
+training:
+  learning_rate: 5.0e-5         # Pilot: 5e-5 (different from SFT)
+  max_steps: 64                 # B0: exactly 64 optimizer steps
+
+  # Batch size matched to SFT
+  per_device_train_batch_size: 16
+  gradient_accumulation_steps: 1
+
+  # GRPO-specific parameters
+  num_generations: 4            # Pilot: 4 rollouts
+  max_completion_length: 512    # Pilot: 512 to match eval
+  temperature: 1.0              # Pilot: temp 1.0
+  beta: 0.0                     # Pilot: KL penalty = 0
+
+  # Optimization - matched to SFT where possible
+  optim: adamw_torch
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  warmup_steps: 0               # No warmup
+  lr_scheduler_type: linear
+
+  bf16: true
+  fp16: false
+
+  logging_steps: 8
+
+  # Save the adapter
+  save_strategy: "steps"
+  save_steps: 64            # Save at the end (step 64)
+  save_total_limit: 1       # Keep only final adapter
+  output_dir: "./b0_adapters/grpo_alpha8"
+
+# Run all 3 seeds
+seeds: [42, 123, 456]
+
+# Expected outputs (3 adapters):
+# ./b0_adapters/grpo_alpha8/seed_42/checkpoint/
+# ./b0_adapters/grpo_alpha8/seed_123/checkpoint/
+# ./b0_adapters/grpo_alpha8/seed_456/checkpoint/
