@@ -52,8 +52,8 @@ training:
   warmup_steps: 0
   lr_scheduler_type: linear
 
-  bf16: true
-  fp16: false
+  bf16: false
+  fp16: true  # T4 compute capability 7.5 requires fp16, not bf16
 
   dataset_text_field: text
   packing: false
